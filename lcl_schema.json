@@ -1,0 +1,67 @@
+ url=https://github.com/Aetherium-Syndicate-Inspectra/Aetherium-Manifest/blob/main/
+{
+  "version": "3.0",
+  "title": "Light Control Language (LCL) Schema",
+  "description": "Structured control signals between Intent Interpreter and Runtime",
+  
+  "control_packet": {
+    "id": "unique_control_id",
+    "timestamp": "ISO8601",
+    
+    "intent": {
+      "user_request": "string",
+      "primary_goal": "enum: [create_form, respond_to_emotion, visualize_concept, manifest_error, dissolve]",
+      "abstraction_level": "enum: [concrete, symbolic, abstract]",
+      "mode": "enum: [symbol, world, shape, scene, motion, feedback]"
+    },
+    
+    "morphology": {
+      "family": "string",
+      "symmetry": "int 1-12",
+      "complexity": "float 0-1",
+      "edge_softness": "float 0-1",
+      "density": "float 0-1"
+    },
+    
+    "motion": {
+      "archetype": "enum: [emergence, stabilization, dissolution, reasoning, error, breath, spiral, wave]",
+      "tempo_hz": "float 0.1-2.0",
+      "coherence_target": "float 0-1",
+      "flow_mode": "enum: [radial_bloom, spiral_convergence, wave_propagation, drift, fracture]",
+      "attack_ms": "int 200-2000",
+      "settle_ms": "int 500-5000",
+      "release_ms": "int 500-3000"
+    },
+    
+    "optics": {
+      "palette_mode": "enum: [thermodynamic, emotional, spectral, monochrome]",
+      "primary_colors": ["#HEX", "#HEX"],
+      "secondary_colors": ["#HEX", "#HEX"],
+      "glow_strength": "float 0-1",
+      "luminance": "float 0-1",
+      "contrast": "float 0-1"
+    },
+    
+    "field_parameters": {
+      "coherence": "float 0-1",
+      "turbulence": "float 0-1",
+      "flow_magnitude": "float 0-1",
+      "noise_level": "float 0-1",
+      "vorticity": "float 0-1"
+    },
+    
+    "constraints": {
+      "max_particles": "int",
+      "max_energy": "float",
+      "max_brightness": "float",
+      "duration_ms": "int or null",
+      "safety_level": "enum: [strict, normal, expressive]"
+    },
+    
+    "reference": {
+      "book_of_formation_id": "string or null",
+      "motion_archetype_id": "string",
+      "evaluation_mode": "enum: [off, periodic, continuous]"
+    }
+  }
+}
