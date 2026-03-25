@@ -32,10 +32,28 @@ jobs:
       - name: Typecheck critical transport module
         run: mypy --ignore-missing-imports api_gateway/aetherbus_extreme.py
 
+  ecosystem-compatibility-checklist:
+    name: Ecosystem Compatibility Checklist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Lint ecosystem memory + contract impact checklist
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python tools/ci/ecosystem_compatibility_check.py --check-pr-body
+          else
+            python tools/ci/ecosystem_compatibility_check.py
+          fi
+
   contract-runtime-quality:
     name: Contracts + Runtime Quality
     runs-on: ubuntu-latest
-    needs: lint-and-typecheck
+    needs:
+      - lint-and-typecheck
+      - ecosystem-compatibility-checklist
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
