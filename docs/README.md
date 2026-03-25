@@ -2,7 +2,8 @@
 
 เอกสารชุดนี้เป็น **Canonical Source of Truth** สำหรับสถาปัตยกรรม Aetherium Manifest ในแกน
 - AETHERBUS TACHYON (infrastructure)
-- AETHERIUM-GENESIS / GunUI (embodiment + cognition)
+- AETHERIUM-GENESIS / 
+Aetherium-Manifest UI (embodiment + cognition)
 
 > หลักการสำคัญ: **เอกสาร = Canon / โค้ด = Implementation ที่ต้องเคารพ Canon**
 
