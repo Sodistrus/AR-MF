@@ -361,6 +361,14 @@ PSYCHO_SAFETY_LIMITS = {
     "glow_intensity": 0.72,
     "velocity": 0.50,
 }
+WCAG_FLASHES_PER_SECOND_MAX = 3.0
+IEEE_1789_LOW_RISK_FREQUENCY_HZ = 90.0
+IEEE_1789_LOW_FREQ_FLICKER_CAP = 0.08
+PSYCHO_SERIES_WINDOW_SECONDS = 20 * 60
+PSYCHO_SERIES_MAX_POINTS = 600
+DRIFT_DETECTION_WINDOW_SECONDS = 5 * 60
+DRIFT_MIN_STEP_HZ = 0.1
+DRIFT_MIN_SLOPE_HZ_PER_SEC = DRIFT_MIN_STEP_HZ / DRIFT_DETECTION_WINDOW_SECONDS
 
 
 def _utc_now() -> datetime:
@@ -435,6 +443,7 @@ class RuntimeGovernor:
         self.schema: Optional[Dict[str, Any]] = None
         self.last_accepted_contract: Optional[Dict[str, Any]] = None
         self.telemetry_events: List[Dict[str, Any]] = []
+        self.psycho_safety_series: List[Dict[str, float]] = []
         if self.schema_path and self.schema_path.exists():
             self.schema = json.loads(self.schema_path.read_text(encoding="utf-8"))
 
@@ -723,7 +732,95 @@ class RuntimeGovernor:
             renderer["velocity"] = PSYCHO_SAFETY_LIMITS["velocity"]
             notes.append(f"psycho_safety_gate renderer_controls.velocity: {original} -> {renderer['velocity']}")
 
+        cadence_hz = self._extract_cadence_hz(payload)
+        if cadence_hz > WCAG_FLASHES_PER_SECOND_MAX:
+            notes.append(
+                f"psycho_safety_gate cadence_hz: {cadence_hz} -> {WCAG_FLASHES_PER_SECOND_MAX} (WCAG <=3 flashes/sec)"
+            )
+            cadence_hz = WCAG_FLASHES_PER_SECOND_MAX
+
+        if WCAG_FLASHES_PER_SECOND_MAX < cadence_hz < IEEE_1789_LOW_RISK_FREQUENCY_HZ and intent.get("flicker", 0.0) > IEEE_1789_LOW_FREQ_FLICKER_CAP:
+            original = intent.get("flicker", 0.0)
+            intent["flicker"] = IEEE_1789_LOW_FREQ_FLICKER_CAP
+            notes.append(
+                "psycho_safety_gate intent_state.flicker: "
+                f"{original} -> {intent['flicker']} (IEEE 1789 low-frequency mitigation)"
+            )
+
+        sample = self._record_psycho_safety_sample(payload, cadence_hz)
+        if self._detect_gradual_drift(sample["ts"]):
+            original_velocity = renderer.get("velocity", 0.0)
+            renderer["velocity"] = min(float(renderer.get("velocity", 0.0) or 0.0), 0.18)
+            if original_velocity != renderer["velocity"]:
+                notes.append(
+                    "psycho_safety_gate renderer_controls.velocity: "
+                    f"{original_velocity} -> {renderer['velocity']} (gradual drift containment)"
+                )
+
+            original_luminance = intent.get("glow_intensity", 0.0)
+            intent["glow_intensity"] = min(float(intent.get("glow_intensity", 0.0) or 0.0), 0.35)
+            if original_luminance != intent["glow_intensity"]:
+                notes.append(
+                    "psycho_safety_gate intent_state.glow_intensity: "
+                    f"{original_luminance} -> {intent['glow_intensity']} (gradual drift containment)"
+                )
+
+            notes.append("psycho_safety_gate gradual frequency drift detected and contained")
+
+        renderer.setdefault("shader_uniforms", {})
+        if isinstance(renderer["shader_uniforms"], dict):
+            renderer["shader_uniforms"]["cadence_hz"] = cadence_hz
+
         return notes
+
+    def _extract_cadence_hz(self, payload: Dict[str, Any]) -> float:
+        intent = payload.get("intent_state", {})
+        renderer = payload.get("renderer_controls", {})
+        uniforms = renderer.get("shader_uniforms", {})
+        if isinstance(uniforms, dict) and isinstance(uniforms.get("cadence_hz"), (int, float)):
+            return max(0.0, float(uniforms["cadence_hz"]))
+        flicker = float(intent.get("flicker", 0.0) or 0.0)
+        return max(0.0, flicker * 25.0)
+
+    def _record_psycho_safety_sample(self, payload: Dict[str, Any], cadence_hz: float) -> Dict[str, float]:
+        intent = payload.get("intent_state", {})
+        ts = self._payload_ts_seconds(payload)
+        sample = {
+            "ts": ts,
+            "cadence_hz": max(0.0, cadence_hz),
+            "flicker_proxy": max(0.0, float(intent.get("flicker", 0.0) or 0.0)),
+            "luminance_proxy": max(0.0, float(intent.get("glow_intensity", 0.0) or 0.0)),
+        }
+        self.psycho_safety_series.append(sample)
+        if len(self.psycho_safety_series) > PSYCHO_SERIES_MAX_POINTS:
+            self.psycho_safety_series = self.psycho_safety_series[-PSYCHO_SERIES_MAX_POINTS:]
+        cutoff = ts - PSYCHO_SERIES_WINDOW_SECONDS
+        self.psycho_safety_series = [point for point in self.psycho_safety_series if point["ts"] >= cutoff]
+        return sample
+
+    def _detect_gradual_drift(self, now_ts: float) -> bool:
+        window_start = now_ts - DRIFT_DETECTION_WINDOW_SECONDS
+        window = [point for point in self.psycho_safety_series if point["ts"] >= window_start]
+        if len(window) < 3:
+            return False
+        start = window[0]
+        end = window[-1]
+        elapsed = end["ts"] - start["ts"]
+        if elapsed <= 0:
+            return False
+        delta = end["cadence_hz"] - start["cadence_hz"]
+        slope = delta / elapsed
+        monotonic = all(curr["cadence_hz"] >= prev["cadence_hz"] for prev, curr in zip(window, window[1:]))
+        return monotonic and delta >= DRIFT_MIN_STEP_HZ and slope >= DRIFT_MIN_SLOPE_HZ_PER_SEC
+
+    def _payload_ts_seconds(self, payload: Dict[str, Any]) -> float:
+        emitted_at = payload.get("emitted_at")
+        if isinstance(emitted_at, str):
+            try:
+                return datetime.fromisoformat(emitted_at.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                pass
+        return _utc_now().timestamp()
 
     def _validate_against_schema(self, payload: Dict[str, Any]) -> List[str]:
         errors: List[str] = []

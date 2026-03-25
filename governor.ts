@@ -492,6 +492,14 @@ export const PSYCHO_SAFETY_LIMITS = {
   glow_intensity: 0.72,
   velocity: 0.5,
 } as const;
+export const WCAG_FLASHES_PER_SECOND_MAX = 3;
+export const IEEE_1789_LOW_RISK_FREQUENCY_HZ = 90;
+export const IEEE_1789_LOW_FREQ_FLICKER_CAP = 0.08;
+export const PSYCHO_SERIES_WINDOW_SECONDS = 20 * 60;
+export const PSYCHO_SERIES_MAX_POINTS = 600;
+export const DRIFT_DETECTION_WINDOW_SECONDS = 5 * 60;
+export const DRIFT_MIN_STEP_HZ = 0.1;
+export const DRIFT_MIN_SLOPE_HZ_PER_SEC = DRIFT_MIN_STEP_HZ / DRIFT_DETECTION_WINDOW_SECONDS;
 
 function deepCopy<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -568,6 +576,7 @@ export class RuntimeGovernor {
 
   public lastAcceptedContract: Required<ParticleControlContract> | null = null;
   public telemetryEvents: TelemetryEvent[] = [];
+  public psychoSafetySeries: Array<{ ts: number; cadence_hz: number; flicker_proxy: number; luminance_proxy: number }> = [];
 
   constructor(options: RuntimeGovernorOptions = {}) {
     this.schemaValidator = options.schemaValidator;
@@ -889,7 +898,108 @@ export class RuntimeGovernor {
       notes.push(`psycho_safety_gate renderer_controls.velocity: ${original} -> ${renderer.velocity}`);
     }
 
+    let cadenceHz = this.extractCadenceHz(payload);
+    if (cadenceHz > WCAG_FLASHES_PER_SECOND_MAX) {
+      notes.push(
+        `psycho_safety_gate cadence_hz: ${cadenceHz} -> ${WCAG_FLASHES_PER_SECOND_MAX} (WCAG <=3 flashes/sec)`,
+      );
+      cadenceHz = WCAG_FLASHES_PER_SECOND_MAX;
+    }
+
+    if (
+      cadenceHz > WCAG_FLASHES_PER_SECOND_MAX &&
+      cadenceHz < IEEE_1789_LOW_RISK_FREQUENCY_HZ &&
+      (intent.flicker ?? 0) > IEEE_1789_LOW_FREQ_FLICKER_CAP
+    ) {
+      const original = Number(intent.flicker ?? 0);
+      intent.flicker = IEEE_1789_LOW_FREQ_FLICKER_CAP;
+      notes.push(
+        `psycho_safety_gate intent_state.flicker: ${original} -> ${intent.flicker} (IEEE 1789 low-frequency mitigation)`,
+      );
+    }
+
+    const sample = this.recordPsychoSafetySample(payload, cadenceHz);
+    if (this.detectGradualDrift(sample.ts)) {
+      const originalVelocity = Number(renderer.velocity ?? 0);
+      renderer.velocity = Math.min(originalVelocity, 0.18);
+      if (originalVelocity !== renderer.velocity) {
+        notes.push(
+          `psycho_safety_gate renderer_controls.velocity: ${originalVelocity} -> ${renderer.velocity} (gradual drift containment)`,
+        );
+      }
+
+      const originalLuminance = Number(intent.glow_intensity ?? 0);
+      intent.glow_intensity = Math.min(originalLuminance, 0.35);
+      if (originalLuminance !== intent.glow_intensity) {
+        notes.push(
+          `psycho_safety_gate intent_state.glow_intensity: ${originalLuminance} -> ${intent.glow_intensity} (gradual drift containment)`,
+        );
+      }
+
+      notes.push("psycho_safety_gate gradual frequency drift detected and contained");
+    }
+
+    renderer.shader_uniforms ??= {};
+    renderer.shader_uniforms.cadence_hz = cadenceHz;
+
     return notes;
+  }
+
+  private extractCadenceHz(payload: Required<ParticleControlContract>): number {
+    const shaderCadence = payload.renderer_controls.shader_uniforms?.cadence_hz;
+    if (typeof shaderCadence === "number" && Number.isFinite(shaderCadence)) {
+      return Math.max(0, shaderCadence);
+    }
+
+    const flicker = Number(payload.intent_state.flicker ?? 0);
+    return Math.max(0, flicker * 25);
+  }
+
+  private recordPsychoSafetySample(
+    payload: Required<ParticleControlContract>,
+    cadenceHz: number,
+  ): { ts: number; cadence_hz: number; flicker_proxy: number; luminance_proxy: number } {
+    const ts = this.payloadTsSeconds(payload);
+    const sample = {
+      ts,
+      cadence_hz: Math.max(0, cadenceHz),
+      flicker_proxy: Math.max(0, Number(payload.intent_state.flicker ?? 0)),
+      luminance_proxy: Math.max(0, Number(payload.intent_state.glow_intensity ?? 0)),
+    };
+    this.psychoSafetySeries.push(sample);
+    if (this.psychoSafetySeries.length > PSYCHO_SERIES_MAX_POINTS) {
+      this.psychoSafetySeries = this.psychoSafetySeries.slice(-PSYCHO_SERIES_MAX_POINTS);
+    }
+    const cutoff = ts - PSYCHO_SERIES_WINDOW_SECONDS;
+    this.psychoSafetySeries = this.psychoSafetySeries.filter((point) => point.ts >= cutoff);
+    return sample;
+  }
+
+  private detectGradualDrift(nowTs: number): boolean {
+    const windowStart = nowTs - DRIFT_DETECTION_WINDOW_SECONDS;
+    const window = this.psychoSafetySeries.filter((point) => point.ts >= windowStart);
+    if (window.length < 3) return false;
+
+    const start = window[0];
+    const end = window[window.length - 1];
+    const elapsed = end.ts - start.ts;
+    if (elapsed <= 0) return false;
+
+    const delta = end.cadence_hz - start.cadence_hz;
+    const slope = delta / elapsed;
+    const monotonic = window.slice(1).every((point, index) => point.cadence_hz >= window[index].cadence_hz);
+    return monotonic && delta >= DRIFT_MIN_STEP_HZ && slope >= DRIFT_MIN_SLOPE_HZ_PER_SEC;
+  }
+
+  private payloadTsSeconds(payload: Required<ParticleControlContract>): number {
+    const raw = payload.emitted_at;
+    if (typeof raw === "string") {
+      const parsed = Date.parse(raw);
+      if (!Number.isNaN(parsed)) {
+        return parsed / 1000;
+      }
+    }
+    return utcNow(this.nowFactory).getTime() / 1000;
   }
 
   validateAgainstSchema(payload: Required<ParticleControlContract>): string[] {

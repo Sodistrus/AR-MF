@@ -558,6 +558,8 @@ This structure is designed for deterministic local/runtime testing. For producti
 
 Current frontend/kernel runtime telemetry mirrors the proposed control-plane observability fields and now tracks `fps`, `dropped_frames`, `particle_count`, `average_velocity`, `last_ai_command`, and `policy_block_count` before forwarding or persisting samples.
 
+The runtime governor also includes a `psycho_safety_gate` stage that now tracks cadence/flicker/luminance time-series samples, enforces a WCAG-aligned cadence ceiling (`<= 3` flashes/sec), applies IEEE 1789-inspired low-frequency flicker mitigation, and contains gradual frequency drift patterns before policy-block evaluation.
+
 ---
 
 ## Validation & Tests
