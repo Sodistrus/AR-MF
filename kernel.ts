@@ -161,7 +161,7 @@ export class ParticleControlSurface {
     const dx = x - cx;
     const dy = y - cy;
     const len = Math.hypot(dx, dy) || 1;
-    const velocity = (0.15 + this.control.velocity * 1.1) * tickPolicy.flowScale;
+    const velocity = (0.15 + this.control.velocity * 1.18) * tickPolicy.flowScale;
     const turbulence = this.control.turbulence;
     const waveX = Math.sin(y * 0.006 + this.time * this.rhythm);
     const waveY = Math.cos(x * 0.005 - this.time * (this.rhythm * 0.8 + 0.2));
