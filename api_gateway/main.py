@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 import httpx
 from .deterministic_replay import INCIDENT_REPLAY_PACKAGES, replay_incident_package
+from .tachyon_bridge import build_tachyon_envelope
 from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -1041,6 +1042,19 @@ async def emit_cognitive_dsl(
         response["visual_manifestation"] = pipeline_result.visual_manifestation.model_dump()
     else:
         response["visual_manifestation"] = _run_direct_visual_fallback(parsed.model_response.visual_manifestation).model_dump()
+
+    response["tachyon_envelope"] = build_tachyon_envelope(
+        trace_id=parsed.model_response.trace_id,
+        session_id=parsed.session_id,
+        provider=x_model_provider,
+        model_version=x_model_version,
+        model_name=parsed.model_metadata.model_name,
+        intent_vector=parsed.model_response.intent_vector.model_dump(),
+        intent_state=parsed.model_response.particle_control.intent_state.model_dump(),
+        governor_result=response.get("governor_result"),
+        visual_manifestation=response["visual_manifestation"],
+        ghost_flag=parsed.model_response.particle_control.intent_state.state in {"LISTENING", "THINKING", "SENSOR_PENDING_PERMISSION"},
+    )
 
     return response
 

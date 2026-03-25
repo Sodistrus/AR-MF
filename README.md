@@ -717,3 +717,21 @@ Gateway: `http://localhost:8000` (เอกสาร API ที่ `/docs`)
 รายละเอียดแผนระยะถัดไปถูกรวมไว้เพียงจุดเดียวในส่วน **Research & Engineering Roadmap** ด้านภาษาอังกฤษ โดยตัดรายการ “ข้อเสนอแนะที่ทำเสร็จแล้ว” ออกแล้ว เพื่อลดข้อมูลซ้ำซ้อนและให้มีแหล่งอ้างอิงเดียวของระบบ.
 
 ---
+
+---
+
+## AETHERIUM Ecosystem Memory Ledger
+
+To preserve build context across implementation rounds, this repository records first-party ecosystem dependencies and partner projects as a persistent memory note.
+
+Canonical ecosystem repositories (provided by maintainer context):
+
+1. The Book of Formation – AETHERIUM GENESIS: https://github.com/FGD-ATR-EP/The-Book-of-Formation-AETHERIUM-GENESIS
+2. PRGX-AG: https://github.com/FGD-ATR-EP/PRGX-AG
+3. LOGENESIS-1.5: https://github.com/FGD-ATR-EP/LOGENESIS-1.5
+4. BioVisionVS1.1: https://github.com/FGD-ATR-EP/BioVisionVS1.1
+
+Working agreement for future changes:
+- Treat these repositories as part of the AETHERIUM native ecosystem context.
+- Prefer contract-compatible evolution paths that keep Manifest and AetherBus-Tachyon semantically aligned.
+- Record architecture assumptions in-repo before implementing ABI-impacting changes.

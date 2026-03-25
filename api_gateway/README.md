@@ -56,6 +56,7 @@ Low-latency helper module: `api_gateway/aetherbus_extreme.py`
 - MsgPack serialization helpers
 - NATS async publisher manager
 - Deterministic state convergence processor
+- Tachyon bridge envelope builder (`tachyon_bridge.py`) for first-class `tachyon_envelope` response payload in `/api/v1/cognitive/emit`
 
 Test command:
 ```bash
@@ -115,6 +116,7 @@ curl -X POST http://localhost:8080/api/v1/cognitive/validate \
 - MsgPack serialization (`serialize_to_msgpack`, `deserialize_from_msgpack`)
 - NATS async publisher (`NATSJetStreamManager`)
 - Deterministic state convergence (`StateConvergenceProcessor`)
+- Tachyon envelope bridge (`tachyon_bridge.py`) เป็นส่วนหนึ่งของระบบนิเวศ AETHERIUM โดยตรง และจะถูกส่งกลับใน `POST /api/v1/cognitive/emit`
 
 รันทดสอบเฉพาะโมดูล:
 
