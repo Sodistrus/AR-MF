@@ -771,8 +771,6 @@ Gateway: `http://localhost:8000` (เอกสาร API ที่ `/docs`)
 
 ---
 
----
-
 ## AETHERIUM Ecosystem Memory Ledger
 
 To preserve build context across implementation rounds, this repository records first-party ecosystem dependencies and partner projects as a persistent memory note.

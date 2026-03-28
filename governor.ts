@@ -899,6 +899,7 @@ export class RuntimeGovernor {
     }
 
     let cadenceHz = this.extractCadenceHz(payload);
+    const originalCadenceHz = cadenceHz;
     if (cadenceHz > WCAG_FLASHES_PER_SECOND_MAX) {
       notes.push(
         `psycho_safety_gate cadence_hz: ${cadenceHz} -> ${WCAG_FLASHES_PER_SECOND_MAX} (WCAG <=3 flashes/sec)`,
@@ -907,8 +908,8 @@ export class RuntimeGovernor {
     }
 
     if (
-      cadenceHz > WCAG_FLASHES_PER_SECOND_MAX &&
-      cadenceHz < IEEE_1789_LOW_RISK_FREQUENCY_HZ &&
+      originalCadenceHz > WCAG_FLASHES_PER_SECOND_MAX &&
+      originalCadenceHz < IEEE_1789_LOW_RISK_FREQUENCY_HZ &&
       (intent.flicker ?? 0) > IEEE_1789_LOW_FREQ_FLICKER_CAP
     ) {
       const original = Number(intent.flicker ?? 0);

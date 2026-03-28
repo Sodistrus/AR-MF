@@ -733,13 +733,14 @@ class RuntimeGovernor:
             notes.append(f"psycho_safety_gate renderer_controls.velocity: {original} -> {renderer['velocity']}")
 
         cadence_hz = self._extract_cadence_hz(payload)
+        original_cadence_hz = cadence_hz
         if cadence_hz > WCAG_FLASHES_PER_SECOND_MAX:
             notes.append(
                 f"psycho_safety_gate cadence_hz: {cadence_hz} -> {WCAG_FLASHES_PER_SECOND_MAX} (WCAG <=3 flashes/sec)"
             )
             cadence_hz = WCAG_FLASHES_PER_SECOND_MAX
 
-        if WCAG_FLASHES_PER_SECOND_MAX < cadence_hz < IEEE_1789_LOW_RISK_FREQUENCY_HZ and intent.get("flicker", 0.0) > IEEE_1789_LOW_FREQ_FLICKER_CAP:
+        if WCAG_FLASHES_PER_SECOND_MAX < original_cadence_hz < IEEE_1789_LOW_RISK_FREQUENCY_HZ and intent.get("flicker", 0.0) > IEEE_1789_LOW_FREQ_FLICKER_CAP:
             original = intent.get("flicker", 0.0)
             intent["flicker"] = IEEE_1789_LOW_FREQ_FLICKER_CAP
             notes.append(

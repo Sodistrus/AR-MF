@@ -547,11 +547,97 @@
     }
 
     async function deliverMessage(message) {
-      const payload = { message, file_name: selectedFile ? selectedFile.name : null, source: 'homepage' };
+      const traceId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `trace-${Date.now()}`;
+      const sessionId = `homepage-${Date.now()}`;
+      const payload = {
+        session_id: sessionId,
+        model_response: {
+          trace_id: traceId,
+          reasoning_trace: message,
+          intent_vector: {
+            category: 'user_message',
+            emotional_valence: 0,
+            energy_level: 0.5
+          },
+          particle_control: {
+            intent_state: {
+              state: 'LISTENING',
+              shape: 'orb',
+              state_duration_ms: 0,
+              transition_reason: 'frontend_message_submit',
+              particle_density: 0.4,
+              velocity: 0.3,
+              turbulence: 0.2,
+              cohesion: 0.6,
+              flow_direction: 'forward',
+              glow_intensity: 0.4,
+              flicker: 0.1,
+              attractor: 'message_center',
+              palette: {
+                mode: 'duotone',
+                primary: '#6EE7F9',
+                secondary: '#A78BFA'
+              }
+            },
+            renderer_controls: {
+              base_shape: 'orb',
+              chromatic_mode: 'balanced',
+              particle_count: 900,
+              flow_field: 'laminar',
+              shader_uniforms: { cadence_hz: 2.5 },
+              runtime_profile: 'standard'
+            }
+          },
+          visual_manifestation: {
+            base_shape: 'orb',
+            transition_type: 'ease',
+            color_palette: {
+              primary: '#6EE7F9',
+              secondary: '#A78BFA'
+            },
+            particle_physics: {
+              turbulence: 0.2,
+              flow_direction: 'forward',
+              luminance_mass: 0.4,
+              particle_count: 900
+            },
+            chromatic_mode: 'balanced',
+            device_tier: 2
+          }
+        },
+        model_metadata: {
+          model_name: 'Tiny Reasoning',
+          temperature: 0.4,
+          max_tokens: 256
+        },
+        governor_context: {
+          human_override: {
+            allow_runtime_governor_bypass: false,
+            force_safe_mode: false
+          },
+          device_capability: {
+            supports_motion_sensors: true,
+            motion_sensor_permission: 'prompt',
+            low_power_mode: false,
+            gpu_tier: 2
+          }
+        }
+      };
       try {
-        const response = await fetch('/api/message', {
+        const headers = {
+          'Content-Type': 'application/json',
+          'X-Model-Provider': window.AETHERIUM_MODEL_PROVIDER || 'frontend-sim',
+          'X-Model-Version': window.AETHERIUM_MODEL_VERSION || 'tiny-reasoning-v1'
+        };
+        if (window.AETHERIUM_API_KEY) {
+          headers['X-API-Key'] = window.AETHERIUM_API_KEY;
+        }
+
+        const response = await fetch('/api/v1/cognitive/emit', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(payload)
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
