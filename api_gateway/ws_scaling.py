@@ -27,7 +27,7 @@ class CapacityPlan:
 
     @property
     def recommended_nodes(self) -> int:
-        return max(1, int(self.baseline_nodes * self.redundancy_factor + 0.999))
+        return max(1, math.ceil(self.baseline_nodes * self.redundancy_factor))
 
     @property
     def total_memory_gb(self) -> float:
