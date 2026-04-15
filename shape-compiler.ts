@@ -13,6 +13,8 @@ export interface CompiledField {
   points: TargetPoint[];
 }
 
+type LclLike = Record<string, unknown>;
+
 export function compileGlyphFieldFromAlphaMask(
   alphaMask: Uint8Array,
   viewport: Viewport,
@@ -34,10 +36,10 @@ export function compileGlyphFieldFromAlphaMask(
   return { points };
 }
 
-export function compileShapeField(lcl: any, viewport: Viewport): CompiledField;
+export function compileShapeField(lcl: LclLike, viewport: Viewport): CompiledField;
 
 export function compileGlyphField(
-  lcl: any,
+  lcl: LclLike,
   memCtx: CanvasRenderingContext2D,
   W: number,
   H: number,
@@ -73,7 +75,7 @@ export function compileGlyphField(
 }
 
 export function compileSceneField(
-  lcl: any,
+  lcl: LclLike,
   memCtx: CanvasRenderingContext2D,
   W: number,
   H: number,
@@ -115,7 +117,7 @@ export function compileSceneField(
 }
 
 export function compileShapeField(
-  lcl: any,
+  lcl: LclLike,
   WOrViewport: number | Viewport,
   H?: number,
   CX?: number,

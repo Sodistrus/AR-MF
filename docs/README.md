@@ -27,6 +27,8 @@ Aetherium-Manifest UI (embodiment + cognition)
 - `10_AMUI_COLOR_SYSTEM.md` — Thermodynamic color subsystem, palette canon, state mapping, shader contract
 - `11_PLATFORM_WORK_PLAN.md` — platform workstreams, backlog, rollout/rollback, and production DoD
 - `12_FULL_STACK_INTEGRATION_REPORT_TH.md` — รายงานทางการเต็มรูปแบบสำหรับการเชื่อมต่อระบบภายในและภายนอก
+- `CODEBASE_AUDIT_TASKS_EN.md` — pending-only audit backlog (English)
+- `CODEBASE_AUDIT_TASKS_TH.md` — pending-only audit backlog (Thai)
 - `14_AETH_LANGUAGE_BLUEPRINT.md` — implementation-oriented blueprint for AETH DSL (intent-first visual contract language), explicitly separated from current runtime reality
 - `ops/` — production operations package (dashboards, alerts, runbooks, security/privacy checks)
   - `ops/websocket_scaling_1m_blueprint.md` — blueprint for scaling event-driven websocket/state-sync to 1M CCU (implementation-phased, non-claiming)

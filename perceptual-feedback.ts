@@ -22,6 +22,17 @@ interface PhotonSample {
   vy: number;
 }
 
+interface LclLike {
+  morphology?: { family?: string };
+}
+
+interface KernelLike {
+  state: string;
+  coherenceTarget: number;
+  coherence: number;
+  noiseMax: number;
+}
+
 export interface PerceptualEvaluator {
   evaluate(frame: FrameSample, field: { points: Array<{ x: number; y: number }> }, photons: PhotonSample[]): Promise<EvalMetrics>;
 }
@@ -96,8 +107,8 @@ export function perceptualFeedbackLoop(
   photons: PhotonState[],
   W: number,
   H: number,
-  lastLCL: any,
-  kernel: any,
+  lastLCL: LclLike,
+  kernel: KernelLike,
   clamp: (v: number, lo: number, hi: number) => number,
   applyPatch: (patch: Record<string, unknown>) => void,
 ): void {
@@ -130,7 +141,7 @@ export function perceptualFeedbackLoop(
   });
 }
 
-async function evaluateWithBioVisionNet(photons: PhotonState[], W: number, H: number, lastLCL: any): Promise<EvalMetrics> {
+async function evaluateWithBioVisionNet(photons: PhotonState[], W: number, H: number, lastLCL: LclLike): Promise<EvalMetrics> {
   const response = await fetch('/api/perceptual/evaluate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -155,7 +166,7 @@ async function evaluateWithBioVisionNet(photons: PhotonState[], W: number, H: nu
   };
 }
 
-function evaluateWithEdgeModel(photons: PhotonState[], W: number, H: number, lastLCL: any): EvalMetrics {
+function evaluateWithEdgeModel(photons: PhotonState[], W: number, H: number, lastLCL: LclLike): EvalMetrics {
   const sample = Math.min(photons.length, 2000);
   let minX = Infinity;
   let minY = Infinity;

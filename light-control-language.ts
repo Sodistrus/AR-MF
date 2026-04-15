@@ -193,8 +193,8 @@ function fallbackHeuristicLcl(text: string): LightControlLanguage {
   let render_mode: LightControlLanguage['intent'] = 'create_light_form';
   let coherence_target = 0.82;
   let turbulence = 0.22;
-  let symmetry = 1;
-  let density = 0.76;
+  const symmetry = 1;
+  const density = 0.76;
   let scale = 0.35;
   let textContent = null;
   let rhythm_hz = 0.2;

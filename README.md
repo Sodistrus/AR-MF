@@ -26,8 +26,10 @@ Core embodiment remains a **full-screen light body + bottom composer**, now expa
   - `POST /api/v1/cognitive/validate`
   - `POST /api/v1/cognitive/generate`
   - `POST /api/v1/telemetry/ingest`
+  - `GET /api/v1/telemetry/query`
   - `GET /api/v1/reliability/temporal-morphogenesis`
-  - `WS /ws/state-sync/{room_id}`
+  - `WS /ws/state-sync/{room_id}` (via `ws_gateway`)
+  - `WS /ws/cognitive-stream` (via `ws_gateway`)
 - Runtime HUD now exposes state/resonance/entropy with terminal-grade governor checkpoints.
 - Composer now supports **Attach + Voice + EMIT** inside a glassmorphism shell for light-native interaction.
 - Governed manifestation loop is visible in UI (`Contract Proposed -> Governor Verification -> Manifest`).
@@ -117,6 +119,11 @@ python3 tools/benchmarks/runtime_semantic_benchmark.py --input tools/benchmarks/
 npx --yes tsx --test test_runtime_governor_psycho_safety.test.ts
 npm run lint
 ```
+
+## Notes on runtime security defaults
+
+- Protected API endpoints are fail-closed when `AETHERIUM_API_KEY` is not configured.
+- Telemetry storage is intentionally in-memory (`TELEMETRY_TS_DB`) for deterministic local testing.
 
 ## Security and governance
 

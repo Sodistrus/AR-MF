@@ -693,7 +693,7 @@ export class RuntimeGovernor {
       log("capability_gate", "ok");
     }
 
-    let accepted = !blocked;
+    const accepted = !blocked;
     let manifestationGateOpen = accepted;
     if (blocked) {
       const safe = this.safeContract("policy_blocked", traceId);
@@ -878,7 +878,8 @@ export class RuntimeGovernor {
     return notes;
   }
 
-  applyPsychoSafetyGate(payload: Required<ParticleControlContract>, _ctx: Required<GovernorContext>): string[] {
+  applyPsychoSafetyGate(payload: Required<ParticleControlContract>, ctx: Required<GovernorContext>): string[] {
+    void ctx;
     const notes: string[] = [];
     const intent = payload.intent_state;
     const renderer = payload.renderer_controls;
@@ -1060,10 +1061,10 @@ export class RuntimeGovernor {
     }
 
     // Scholar safety gates
-    const scholar = (intent as any).scholar;
+    const scholar = (intent as { scholar?: { cited_sources?: string[]; unverified_source_detected?: boolean; summary?: string } }).scholar;
     if (scholar) {
       if (state === "ERROR" || state === "WARNING") {
-        delete (intent as any).scholar;
+        delete (intent as { scholar?: unknown }).scholar;
         violations.push("Priority conflict: Scholar intent suppressed during system alert");
         return { blocked: false, notes: violations };
       }
@@ -1287,7 +1288,7 @@ function makeNaiveRuntimeAbiValidator(schema: JsonSchema): RuntimeGovernorOption
     for (const section of ["intent_state", "renderer_controls"] as const) {
       const sectionSchema = schema.properties?.[section];
       const sectionRequired = sectionSchema?.required ?? [];
-      const sectionValue = (payload as Record<string, any>)[section] ?? {};
+      const sectionValue = (payload as Record<string, Record<string, unknown>>)[section] ?? {};
       for (const key of sectionRequired) {
         if (sectionValue[key] == null) {
           errors.push(`${section}.${key}: missing required field`);
