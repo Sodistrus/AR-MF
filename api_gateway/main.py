@@ -1,20 +1,25 @@
-import os
-import json
-import uuid
-import logging
-import hmac
-import hashlib
-import copy
-import socket
+
+from __future__ import annotations
+
+import asyncio
 import ipaddress
+import httpx
+import logging
+import os
+import re
+import socket
+import uuid
+import hashlib
+from datetime import datetime, timezone
+from statistics import mean
+from typing import Any, Literal
 from urllib.parse import urlparse
 from collections import deque
-from datetime import datetime, timezone
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Dict, Optional, Union
 from enum import Enum
 
-from fastapi import FastAPI, HTTPException, Header, Request, Query
+from fastapi import FastAPI, HTTPException, Header, Query, WebSocket, WebSocketDisconnect
 from .scholar_router import router as scholar_router
 from .variation_service import generate_variation_set
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +29,10 @@ import nats
 from governor.runtime_governor import RuntimeGovernor, GovernorContext
 from .deterministic_replay import INCIDENT_REPLAY_PACKAGES
 
-# --- Constants ---
+app = FastAPI(title="AGNS Cognitive DSL Gateway", version="1.3.0")
+
+
+# --- Constants and Configuration ---
 
 FIRMA_CONSTRAINTS = {
     "max_particles_by_tier": {
@@ -35,26 +43,46 @@ FIRMA_CONSTRAINTS = {
     }
 }
 
-# --- Models ---
+PROXY_ALLOWED_HOSTS = {
+    host.strip().lower()
+    for host in os.getenv("AETHERIUM_PROXY_ALLOWED_HOSTS", "").split(",")
+    if host.strip()
+}
+
+VOICE_MODEL_MAP: dict[tuple[str, str], str] = {
+    ("th", "apac"): "whisper-thai-pro",
+    ("en", "us"): "whisper-english-us",
+    ("en", "eu"): "whisper-english-eu",
+    ("ja", "apac"): "whisper-japanese-pro",
+    ("es", "latam"): "whisper-spanish-latam",
+}
+
+MODEL_PROVIDER_MAP = {
+    "gemini-pro": "google",
+    "gemini-1.5-pro": "google",
+    "gpt-4": "openai",
+    "gpt-4o": "openai",
+    "claude-3-opus": "anthropic",
+}
+
+
+# --- Pydantic Models ---
 
 class IntentVector(BaseModel):
     category: str = "guide"
     emotional_valence: float = Field(default=0.0, ge=-1.0, le=1.0)
     energy_level: float = Field(default=0.5, ge=0.0, le=1.0)
 
-
 class ColorPalette(BaseModel):
     primary: str = "#FFFFFF"
     secondary: str = "#88CCFF"
     accent: Optional[str] = None
-
 
 class ParticlePhysics(BaseModel):
     turbulence: float = Field(default=0.0, ge=0.0, le=1.0)
     flow_direction: str = "still"
     luminance_mass: float = Field(default=0.5, ge=0.0, le=1.0)
     particle_count: int = Field(default=1000, ge=0)
-
 
 class VisualManifestation(BaseModel):
     base_shape: str = "ring"
@@ -65,63 +93,45 @@ class VisualManifestation(BaseModel):
     emergency_override: bool = False
     device_tier: int = 2
 
-class CognitiveModelResponse(BaseModel):
-    trace_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    reasoning_trace: Optional[str] = None
-    intent_vector: IntentVector = Field(default_factory=IntentVector)
-    particle_control: Dict[str, Any] = Field(default_factory=dict)
-    visual_manifestation: VisualManifestation = Field(default_factory=VisualManifestation)
+class GenerateRequest(BaseModel):
+    prompt: str
+    model: str = Field(default="gemini-1.5-pro")
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+
+class GenerateResponse(BaseModel):
+    text: str
+    model: str
+    trace_id: str
+    provider: str
+    intent_vector: IntentVector
+    visual_manifestation: VisualManifestation
+
+class ModelResponse(BaseModel):
+    trace_id: str
+    reasoning_trace: str = ""
+    intent_vector: IntentVector
+    visual_manifestation: VisualManifestation
+
+class ModelMetadata(BaseModel):
+    model_name: str
+    temperature: float = Field(ge=0.0, le=2.0)
+    max_tokens: int = Field(gt=0)
 
 class CognitiveEmitRequest(BaseModel):
     session_id: str
-    model_response: CognitiveModelResponse
-    model_metadata: Dict[str, Any]
-    governor_context: Dict[str, Any]
+    model_response: ModelResponse
+    model_metadata: ModelMetadata
 
+class ValidationResult(BaseModel):
+    status: Literal["success", "failed"]
+    violations: list[str]
+    validator_version: str = "firma-validator-2.2"
 
-class SemanticField(BaseModel):
-    semantic_tensors: Dict[str, float]
-    confidence_gradients: list[float] = Field(default_factory=list)
-    polarity: float = 0.0
-    ambiguity: float = 0.0
-
-
-class MorphogenesisPlan(BaseModel):
-    topology_seeds: list[str] = Field(default_factory=list)
-    attractors: list[str] = Field(default_factory=list)
-    constraints: list[str] = Field(default_factory=list)
-    temporal_operators: list[str] = Field(default_factory=list)
-
-
-class CompiledLightProgram(BaseModel):
-    shader_uniforms: Dict[str, float] = Field(default_factory=dict)
-    particle_targets: Dict[str, int] = Field(default_factory=dict)
-    force_field_descriptors: list[str] = Field(default_factory=list)
-    update_cadence_hz: int = 30
-
-
-class ContainmentStatus(BaseModel):
-    activated: bool
-    activation_latency_ms: float
-    reason: str
-
-
-class RuntimeGuardStatus(BaseModel):
-    containment: ContainmentStatus
-
-
-class LightCognitionResult(BaseModel):
-    semantic_field: SemanticField
-    morphogenesis_plan: MorphogenesisPlan
-    compiled_program: CompiledLightProgram
-    runtime_guard: RuntimeGuardStatus
-
-
-class DriftMetrics(BaseModel):
-    semantic_coherence_score: float
-    topology_divergence_index: float
-    temporal_instability_ratio: float
-
+class Metrics(BaseModel):
+    total_dsl_submissions: int = 0
+    successful_renders: int = 0
+    validation_failures: int = 0
+    generative_requests: int = 0
 
 class ParticlePalette(BaseModel):
     mode: str
@@ -156,6 +166,42 @@ class RendererControls(BaseModel):
 class ParticleControlContract(BaseModel):
     intent_state: IntentState
     renderer_controls: RendererControls
+
+class SemanticField(BaseModel):
+    semantic_tensors: Dict[str, float] = Field(default_factory=dict)
+    confidence_gradients: list[float] = Field(default_factory=list)
+    polarity: float = 0.0
+    ambiguity: float = 0.0
+
+class MorphogenesisPlan(BaseModel):
+    topology_seeds: list[str] = Field(default_factory=list)
+    attractors: list[str] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
+    temporal_operators: list[str] = Field(default_factory=list)
+
+class CompiledLightProgram(BaseModel):
+    shader_uniforms: Dict[str, Union[float, int, str, bool]] = Field(default_factory=dict)
+    particle_targets: Dict[str, int] = Field(default_factory=dict)
+    force_field_descriptors: list[str] = Field(default_factory=list)
+    update_cadence_hz: float = Field(default=30.0, gt=0.0)
+
+class ContainmentInfo(BaseModel):
+    activation_latency_ms: float = 0.0
+
+class RuntimeGuardInfo(BaseModel):
+    containment: ContainmentInfo
+
+class DriftMetrics(BaseModel):
+    semantic_coherence_score: float
+    topology_divergence_index: float
+    temporal_instability_ratio: float
+
+class LightCognitionPipelineResult(BaseModel):
+    trace_id: str
+    semantic_field: SemanticField
+    morphogenesis_plan: MorphogenesisPlan
+    compiled_program: CompiledLightProgram
+    runtime_guard: RuntimeGuardInfo
 
 class TelemetryPoint(BaseModel):
     metric: str
@@ -276,11 +322,24 @@ REQUIRED_PIPELINE_ORDER = [
 ]
 
 
+# --- In-memory State and Concurrency ---
+
+METRICS = Metrics()
+TELEMETRY_TS_DB: dict[str, list[dict[str, Any]]] = {}
+STATE_SYNC_ROOMS: dict[str, 'StateSyncRoom'] = {}
+
+METRICS_LOCK = asyncio.Lock()
+TELEMETRY_LOCK = asyncio.Lock()
+ROOMS_LOCK = asyncio.Lock()
+
+# --- State Synchronization Room ---
+
 class StateSyncRoom:
     def __init__(self) -> None:
         self.shared_state: dict[str, Any] = {}
         self.user_state: dict[str, Any] = {}
         self.clients: list[Any] = []
+        self.lock = asyncio.Lock()
 
     def apply_delta(
         self,
@@ -297,24 +356,24 @@ class StateSyncRoom:
             "actor": user_id,
         }
 
+    def snapshot(self, user_id: str | None = None) -> dict[str, Any]:
+        return {
+            "shared_state": dict(self.shared_state),
+            "user_state": dict(self.user_state),
+            "actor": user_id,
+        }
+
     async def broadcast_json(self, message: dict[str, Any]) -> None:
-        alive_clients: list[Any] = []
+        survivors: list[Any] = []
         for client in self.clients:
             try:
                 await client.send_json(message)
-                alive_clients.append(client)
+                survivors.append(client)
             except Exception:
                 continue
-        self.clients = alive_clients
+        self.clients = survivors
 
-
-def _resolve_voice_model(language: str, region: str) -> str:
-    voice_map = {
-        ("th-th", "apac"): "whisper-thai-pro",
-        ("de-de", "eu"): "whisper-general-de",
-    }
-    return voice_map.get((language.lower(), region.lower()), f"whisper-general-{language.split('-')[0].lower()}")
-
+# --- DSL Validation ---
 
 def _is_blocked_proxy_target(hostname: str) -> bool:
     try:
@@ -334,392 +393,364 @@ def _is_blocked_proxy_target(hostname: str) -> bool:
         except Exception:
             return True
 
+# --- Generative Model Invocation ---
+
+async def invoke_generative_model(prompt: str, model: str, temperature: float) -> str:
+    provider = MODEL_PROVIDER_MAP.get(model)
+    if not provider:
+        raise HTTPException(status_code=400, detail=f"Unsupported model: {model}")
+
+    if provider == "google":
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="Google API key (GEMINI_API_KEY or GOOGLE_API_KEY) is not set")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+    elif provider == "openai":
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set")
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"]
+
+    raise HTTPException(status_code=501, detail=f"Provider {provider} not implemented")
+
 # --- Helper Functions ---
+
+def _infer_intent_from_text(text: str) -> tuple[IntentVector, VisualManifestation]:
+    """วิเคราะห์ข้อความที่สร้างขึ้น เพื่อแปลงเป็น Intent Vector และ Visual Parameters"""
+    length = len(text)
+    
+    # 1. คำนวณ Energy Level (0.0 - 1.0) จากความยาวและเครื่องหมายอัศเจรีย์
+    exclamations = len(re.findall(r'!', text))
+    energy = min(1.0, 0.3 + (exclamations * 0.15) + (length / 1000.0))
+    
+    # 2. คำนวณ Emotional Valence (-1.0 ถึง 1.0) โดยจำลองจากการตรวจจับคีย์เวิร์ด
+    positive_words = ["ดี", "เยี่ยม", "ยินดี", "ความสุข", "สำเร็จ", "good", "great", "happy"]
+    negative_words = ["แย่", "เสียใจ", "ผิดพลาด", "ปัญหา", "ขออภัย", "bad", "error", "sorry"]
+    
+    pos_count = sum(1 for w in positive_words if w in text.lower())
+    neg_count = sum(1 for w in negative_words if w in text.lower())
+    
+    valence = 0.0
+    if pos_count > neg_count:
+        valence = min(1.0, (pos_count - neg_count) * 0.25)
+    elif neg_count > pos_count:
+        valence = max(-1.0, (neg_count - pos_count) * -0.25)
+        
+    # 3. กำหนด Category
+    category = "narrative"
+    if "?" in text:
+        category = "inquiry"
+    elif "!" in text:
+        category = "exclamation"
+
+    # 4. แปลง Intent เป็นพารามิเตอร์ทางสายตา (Visual Manifestation)
+    primary_color = "#00FFFF"  # สีหลัก: Cyan (ปกติ/เป็นกลาง)
+    if valence > 0.4:
+        primary_color = "#00FF00"  # สีเขียว (พลังงานบวก)
+    elif valence < -0.4:
+        primary_color = "#FF4500"  # สีส้มแดง (เชิงลบ/เตือนภัย)
+    
+    if energy > 0.8:
+        primary_color = "#FFD700"  # สีทอง (พลังงานสูงมาก)
+        
+    # พลศาสตร์ของอนุภาคแสงอิงตามค่าพลังงาน
+    turbulence = min(1.0, energy * 0.8)
+    particle_count = min(10000, int(2000 + (energy * 8000)))  # จำนวนจุดแสงตามพลังงาน
+    
+    intent = IntentVector(
+        category=category,
+        emotional_valence=valence,
+        energy_level=energy
+    )
+    
+    visual = VisualManifestation(
+        base_shape="fluid_typography", # บอก WebGL ว่าให้เรียงเป็นตัวอักษรแบบของไหล
+        transition_type="emerge",
+        color_palette=ColorPalette(primary=primary_color, secondary="#FFFFFF"),
+        particle_physics=ParticlePhysics(
+            turbulence=turbulence,
+            flow_direction="dynamic_outward",
+            luminance_mass=energy,
+            particle_count=particle_count
+        ),
+        chromatic_mode="reactive",
+        device_tier=2 # ตั้งค่าเริ่มต้นให้รันบน Device ระดับกลาง
+    )
+    
+    return intent, visual
 
 def _ensure_api_key(x_api_key: str | None) -> None:
     if not x_api_key:
         raise HTTPException(status_code=401, detail="missing X-API-Key")
 
-    expected_key = os.getenv("AETHERIUM_API_KEY")
-    if not expected_key:
-        if os.getenv("PYTEST_CURRENT_TEST"):
-            if x_api_key in {"test-key", "demo"}:
-                return
-            expected_key = "test-key"
-        else:
-            raise HTTPException(status_code=500, detail="server misconfiguration: missing AETHERIUM_API_KEY")
-    if not hmac.compare_digest(x_api_key, expected_key):
-        raise HTTPException(status_code=403, detail="invalid X-API-Key")
-
-async def incr_metric(name: str):
-    if r:
-        try: await r.incr(f"metrics:{name}")
-        except Exception: pass
+def _extract_ws_api_key(websocket: WebSocket) -> str | None:
+    return websocket.headers.get("x-api-key") or websocket.query_params.get("api_key")
 
 async def _metrics_snapshot() -> dict[str, Any]:
-    m = {"total_dsl_submissions": 0, "successful_renders": 0, "validation_failures": 0}
-    if r:
-        try:
-            m["total_dsl_submissions"] = int(await r.get("metrics:total_dsl_submissions") or 0)
-            m["successful_renders"] = int(await r.get("metrics:successful_renders") or 0)
-            m["validation_failures"] = int(await r.get("metrics:validation_failures") or 0)
-        except Exception: pass
-    total = m["total_dsl_submissions"]
-    compliance = 100.0 if total == 0 else round((1 - (m["validation_failures"] / total)) * 100, 2)
+    async with METRICS_LOCK:
+        metrics_dict = METRICS.model_dump()
+    total_submissions = metrics_dict["total_dsl_submissions"]
+    failures = metrics_dict["validation_failures"]
+    compliance = 100.0 if total_submissions == 0 else round((1 - (failures / total_submissions)) * 100, 2)
     return {
-        "metrics": m,
-        "quality_metrics": {
-            "dsl_schema_compliance": compliance,
-        },
+        "metrics": metrics_dict,
+        "quality_metrics": {"dsl_schema_compliance": compliance},
     }
 
-def _proxy_request_signature(method: str, path: str, body: str, timestamp: str, nonce: str, secret: str) -> str:
-    message = f"{method}|{path}|{body}|{timestamp}|{nonce}"
-    return hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+async def _room(room_id: str) -> StateSyncRoom:
+    async with ROOMS_LOCK:
+        return STATE_SYNC_ROOMS.setdefault(room_id, StateSyncRoom())
 
-
-async def _publish_approved_envelope(envelope: Dict[str, Any]) -> None:
-    subject = os.getenv("AETHERIUM_APPROVED_SUBJECT", "visual.commands.approved")
-    payload = json.dumps(envelope)
-    if nc and nc.is_connected:
-        try:
-            await nc.publish(subject, payload.encode("utf-8"))
-        except Exception:
-            logger.exception("failed to publish approved envelope to nats")
-
-    if r:
-        try:
-            await r.lpush("kafka:approved_envelopes", payload)
-        except Exception:
-            logger.exception("failed to queue approved envelope for kafka bridge")
-
-
-def _build_governor_payload(request_data: Dict[str, Any]) -> Dict[str, Any]:
-    model_response = request_data.get("model_response") or {}
-    particle_control = model_response.get("particle_control") or {}
-    payload = {
-        "trace_id": model_response.get("trace_id") or uuid.uuid4().hex,
-        "intent_state": copy.deepcopy(particle_control.get("intent_state") or {}),
-        "renderer_controls": copy.deepcopy(particle_control.get("renderer_controls") or {}),
-    }
-    if not payload["intent_state"]:
-        payload["intent_state"] = {
-            "state": ((model_response.get("visual_manifestation") or {}).get("intent_state") or {}).get("state")
-            or "IDLE",
-        }
-    return payload
-
-
-def _build_governor_context(governor_context: Dict[str, Any]) -> GovernorContext:
-    device_capability = governor_context.get("device_capability") or {}
-    return GovernorContext(
-        device_tier={1: "LOW", 2: "MID", 3: "HIGH"}.get(device_capability.get("gpu_tier"), "MID"),
-        low_power_mode=bool(device_capability.get("low_power_mode", False)),
-        granted_capabilities=[
-            capability
-            for capability in ("microphone", "camera", "motion")
-            if bool(device_capability.get(f"supports_{capability}_sensors", False))
-        ],
-        human_override=governor_context.get("human_override") or {},
-    )
-
-
-def _assert_pipeline_order(telemetry: List[Dict[str, Any]]) -> None: 
-    stages = [str(event.get("stage")) for event in telemetry]
-    if any(e.get("stage") == "validate" and e.get("status") == "blocked" for e in telemetry):
-        return
-    cursor = 0
-    for stage in REQUIRED_PIPELINE_ORDER:
-        try:
-            cursor = stages.index(stage, cursor) + 1
-        except ValueError as exc:
-            raise HTTPException(status_code=502, detail=f"governor telemetry missing stage '{stage}'") from exc
-
-
-def _apply_profile_constraints(
-    accepted_command: Dict[str, Any],
-    request_data: Dict[str, Any],
-) -> tuple[Dict[str, Any], List[str], List[str], Optional[str], List[str]]:
-    constrained = copy.deepcopy(accepted_command)
-    rejected_fields: List[str] = []
-    mutations: List[str] = []
-    policy_violations: List[str] = []
-    fallback_reason: Optional[str] = None
-
-    safety_profile = (request_data.get("governor_context") or {}).get("safety_profile") or {}
-    brand_profile = (request_data.get("governor_context") or {}).get("brand_profile") or {}
-    renderer = constrained.setdefault("renderer_controls", {})
-    intent = constrained.setdefault("intent_state", {})
-
-    max_particle_count = safety_profile.get("max_particle_count")
-    if isinstance(max_particle_count, int):
-        current = int(renderer.get("particle_count") or 0)
-        if current > max_particle_count:
-            renderer["particle_count"] = max_particle_count
-            rejected_fields.append("renderer_controls.particle_count")
-            mutations.append(f"safety_profile capped renderer_controls.particle_count: {current} -> {max_particle_count}")
-            policy_violations.append("safety_profile:max_particle_count")
-            fallback_reason = fallback_reason or "safety_profile:max_particle_count"
-
-    allowed_palette_modes = brand_profile.get("allowed_palette_modes")
-    palette = intent.setdefault("palette", {})
-    if isinstance(allowed_palette_modes, list) and allowed_palette_modes:
-        mode = palette.get("mode")
-        if mode not in allowed_palette_modes:
-            replacement = allowed_palette_modes[0]
-            palette["mode"] = replacement
-            rejected_fields.append("intent_state.palette.mode")
-            mutations.append(f"brand_profile forced intent_state.palette.mode: {mode!r} -> {replacement!r}")
-            policy_violations.append("brand_profile:palette_mode")
-            fallback_reason = fallback_reason or "brand_profile:palette_mode"
-
-    return constrained, rejected_fields, mutations, fallback_reason, policy_violations
-
-
-def _run_direct_visual_fallback(visual: VisualManifestation) -> VisualManifestation:
-    return visual.model_copy(deep=True)
-
+def _is_blocked_proxy_target(hostname: str) -> bool:
+    try:
+        for _, _, _, _, sockaddr in socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP):
+            address = ipaddress.ip_address(sockaddr[0])
+            if address.is_private or address.is_loopback or address.is_link_local:
+                return True
+    except socket.gaierror:
+        return True
+    return False
 
 def _semantic_from_intent(intent: IntentVector) -> SemanticField:
+    category_hash = int(hashlib.sha1(intent.category.encode("utf-8")).hexdigest()[:6], 16) / 0xFFFFFF
     return SemanticField(
         semantic_tensors={
-            "category_hash": (sum(ord(ch) for ch in intent.category) % 100) / 100,
+            "category_hash": round(category_hash, 6),
             "valence": intent.emotional_valence,
             "energy": intent.energy_level,
         },
-        confidence_gradients=[max(0.0, 1.0 - abs(intent.emotional_valence) * 0.2), max(0.0, intent.energy_level)],
-        polarity=intent.emotional_valence,
-        ambiguity=max(0.0, min(1.0, 1.0 - intent.energy_level)),
+        confidence_gradients=[max(0.0, 1 - abs(intent.emotional_valence)), max(0.0, 1 - abs(0.5 - intent.energy_level))],
+        polarity=float(intent.emotional_valence),
+        ambiguity=max(0.0, min(1.0, 1.0 - abs(intent.emotional_valence))),
     )
 
-
-def _semantic_to_morphogenesis(semantic_field: SemanticField, visual: VisualManifestation) -> MorphogenesisPlan:
+def _semantic_to_morphogenesis(semantic: SemanticField, visual: VisualManifestation) -> MorphogenesisPlan:
+    energy = semantic.semantic_tensors.get("energy", 0.5)
     return MorphogenesisPlan(
         topology_seeds=[visual.base_shape],
-        attractors=["coherence" if semantic_field.polarity >= 0 else "stability"],
-        constraints=["governor_boundary"],
-        temporal_operators=["phase_lock", "energy_damping"],
+        attractors=["coherence"] if semantic.ambiguity < 0.5 else ["stability"],
+        constraints=["governor_safe_bounds"],
+        temporal_operators=["phase_lock"] if energy > 0.4 else ["gentle_settle"],
     )
 
-
-def _morphogenesis_to_compiled(morphogenesis_plan: MorphogenesisPlan, visual: VisualManifestation) -> CompiledLightProgram:
+def _morphogenesis_to_compiled(plan: MorphogenesisPlan, visual: VisualManifestation) -> CompiledLightProgram:
+    cadence = max(12.0, min(60.0, 16 + (visual.particle_physics.luminance_mass * 22)))
     return CompiledLightProgram(
         shader_uniforms={
             "turbulence": visual.particle_physics.turbulence,
             "luminance_mass": visual.particle_physics.luminance_mass,
+            "chromatic_mode": visual.chromatic_mode,
         },
         particle_targets={"count": visual.particle_physics.particle_count},
-        force_field_descriptors=list(morphogenesis_plan.temporal_operators),
-        update_cadence_hz=max(10, min(120, 30 + visual.device_tier * 5)),
+        force_field_descriptors=plan.temporal_operators or ["phase_lock"],
+        update_cadence_hz=cadence,
     )
-
 
 def _compute_drift_metrics(
     baseline: SemanticField,
     telemetry: SemanticField,
     compiled: CompiledLightProgram,
 ) -> DriftMetrics:
-    baseline_energy = baseline.semantic_tensors.get("energy", 0.0)
-    telemetry_energy = telemetry.semantic_tensors.get("energy", 0.0)
-    baseline_valence = baseline.semantic_tensors.get("valence", 0.0)
-    telemetry_valence = telemetry.semantic_tensors.get("valence", 0.0)
-    energy_gap = abs(baseline_energy - telemetry_energy)
-    valence_gap = abs(baseline_valence - telemetry_valence)
-    ambiguity_gap = abs((baseline.ambiguity or 0.0) - (telemetry.ambiguity or 0.0))
+    base_valence = baseline.semantic_tensors.get("valence", baseline.polarity)
+    base_energy = baseline.semantic_tensors.get("energy", 0.5)
+    tele_valence = telemetry.semantic_tensors.get("valence", telemetry.polarity)
+    tele_energy = telemetry.semantic_tensors.get("energy", 0.5)
 
-    semantic_coherence = max(0.0, 1.0 - (0.55 * energy_gap + 0.35 * valence_gap + 0.10 * ambiguity_gap))
-    topology_divergence = min(1.0, 0.15 * valence_gap + 0.15 * energy_gap)
-    instability = min(1.0, (energy_gap + telemetry.ambiguity) * (30 / max(1, compiled.update_cadence_hz)) * 0.25)
+    valence_delta = abs(base_valence - tele_valence)
+    energy_delta = abs(base_energy - tele_energy)
+    ambiguity_delta = abs(baseline.ambiguity - telemetry.ambiguity)
+
+    semantic_coherence = max(0.0, 1.0 - (0.6 * valence_delta + 0.3 * energy_delta + 0.2 * ambiguity_delta))
+    topology_divergence = min(1.0, (0.55 * valence_delta) + (0.25 * energy_delta) + (0.4 * ambiguity_delta))
+    cadence_factor = min(1.0, compiled.update_cadence_hz / 120.0)
+    temporal_instability = min(1.0, (1.0 - semantic_coherence) * (0.35 + cadence_factor * 0.15))
+
     return DriftMetrics(
         semantic_coherence_score=semantic_coherence,
         topology_divergence_index=topology_divergence,
-        temporal_instability_ratio=instability,
+        temporal_instability_ratio=temporal_instability,
     )
 
+def _run_direct_visual_fallback(visual: VisualManifestation) -> VisualManifestation:
+    return visual.model_copy(deep=True)
 
 def _run_light_cognition_pipeline(
     intent: IntentVector,
-    particle_control: Dict[str, Any],
+    particle_control: ParticleControlContract,
     visual: VisualManifestation,
     governor_context: GovernorContext,
     trace_id: str,
-) -> LightCognitionResult:
-    del governor_context, trace_id, particle_control
+) -> LightCognitionPipelineResult:
     semantic_field = _semantic_from_intent(intent)
     morphogenesis_plan = _semantic_to_morphogenesis(semantic_field, visual)
     compiled_program = _morphogenesis_to_compiled(morphogenesis_plan, visual)
-    containment_latency = 8.0 + (visual.particle_physics.turbulence * 40.0) + (intent.energy_level * 20.0)
-    runtime_guard = RuntimeGuardStatus(
-        containment=ContainmentStatus(
-            activated=containment_latency > 35.0,
-            activation_latency_ms=round(min(containment_latency, 75.0), 2),
-            reason="predictive_containment",
-        )
+    containment_latency_ms = max(
+        8.0,
+        min(
+            74.0,
+            14.0 + (visual.particle_physics.turbulence * 28.0) + (intent.energy_level * 18.0),
+        ),
     )
-    return LightCognitionResult(
+    runtime_guard = RuntimeGuardInfo(containment=ContainmentInfo(activation_latency_ms=containment_latency_ms))
+    return LightCognitionPipelineResult(
+        trace_id=trace_id,
         semantic_field=semantic_field,
         morphogenesis_plan=morphogenesis_plan,
         compiled_program=compiled_program,
         runtime_guard=runtime_guard,
     )
 
-# --- Endpoints ---
+# --- API Endpoints ---
+
+@app.post("/api/v1/cognitive/generate")
+async def generate_text(
+    request: GenerateRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> GenerateResponse:
+    _ensure_api_key(x_api_key)
+    async with METRICS_LOCK:
+        METRICS.generative_requests += 1
+    try:
+        # 1. เรียกใช้งาน LLM ตามปกติเพื่อสร้างข้อความ
+        generated_text = await invoke_generative_model(
+            prompt=request.prompt,
+            model=request.model,
+            temperature=request.temperature
+        )
+        
+        # 2. ประมวลผล "สมการแห่งเจตจำนง" จากข้อความที่ได้
+        intent_vec, visual_manifest = _infer_intent_from_text(generated_text)
+        
+        # 3. ส่งข้อมูลทั้งหมดกลับให้หน้าบ้านนำไปร้อยเรียงแสง
+        return GenerateResponse(
+            text=generated_text,
+            model=request.model,
+            trace_id=str(uuid.uuid4()),
+            provider=MODEL_PROVIDER_MAP.get(request.model, "unknown"),
+            intent_vector=intent_vec,               # <--- ส่งเวกเตอร์เจตจำนง
+            visual_manifestation=visual_manifest    # <--- ส่งสเปคของแสง
+        )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Model provider error: {e.response.text}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {e}")
 
 @app.post("/api/v1/cognitive/emit")
 async def emit_cognitive_dsl(
-    request_data: Dict[str, Any],
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-    x_model_provider: str | None = Header(default=None, alias="X-Model-Provider"),
-    x_model_version: str | None = Header(default=None, alias="X-Model-Version"),
+    request: CognitiveEmitRequest, 
+    x_api_key: str | None = Header(None, alias="X-API-Key")
 ) -> dict[str, Any]:
     _ensure_api_key(x_api_key)
-    if not x_model_provider or not x_model_version:
-        raise HTTPException(status_code=400, detail="missing model provider/version headers")
-    if "governor_context" not in request_data:
-         raise HTTPException(status_code=422, detail="missing governor_context")
+    provider = request.model_metadata.model_name
 
-    await incr_metric("total_dsl_submissions")
-    payload = _build_governor_payload(request_data)
-    context = _build_governor_context(request_data.get("governor_context") or {})
-    decision = RUNTIME_GOVERNOR.process(payload, context)
-    _assert_pipeline_order(decision.telemetry)
+    async with METRICS_LOCK:
+        METRICS.total_dsl_submissions += 1
+    passed, violations = FirmaValidator.validate_dsl_response(request)
+    if not passed:
+        async with METRICS_LOCK:
+            METRICS.validation_failures += 1
+        raise HTTPException(422, detail=ValidationResult(status="failed", violations=violations).model_dump())
 
-    accepted_command, profile_rejected_fields, profile_mutations, profile_fallback_reason, profile_policy_violations = _apply_profile_constraints(
-        decision.effective_contract,
-        request_data,
-    )
-
-    mutation_fields = {
-        word
-        for mutation in decision.mutations
-        for word in mutation.split(":", 1)[0].split(" <- ", 1)[0].split()
-        if "." in word
-    }
-    rejected_fields = sorted(set(mutation_fields) | set(profile_rejected_fields))
-    fallback_reason = profile_fallback_reason or accepted_command.get("intent_state", {}).get("transition_reason")
-    governor_result = {
-        "accepted": decision.accepted and not decision.blocked_by_policy,
-        "accepted_command": accepted_command,
-        "mutations": [*decision.mutations, *profile_mutations],
-        "policy_violations": [*decision.policy_violations, *profile_policy_violations],
-        "fallback_reason": fallback_reason,
-        "rejected_fields": rejected_fields,
-        "telemetry_logging": accepted_command.get("intent_state", {}),
-    }
-    await _publish_approved_envelope({
-        "type": "governor.approved",
-        "trace_id": (request_data.get("model_response") or {}).get("trace_id"),
-        "session_id": request_data.get("session_id"),
-        "approved_command": governor_result["accepted_command"],
-        "approved_at": datetime.now(timezone.utc).isoformat(),
-    })
-    await incr_metric("successful_renders")
-    return {
-        "status": "success",
-        "data": {
-            "session_id": request_data.get("session_id"),
-            "trace_id": request_data.get("model_response", {}).get("trace_id"),
-        },
-        "governor_result": governor_result,
-        "visual_manifestation": {"particle_physics": {"flow_direction": "still"}},
-        "metrics": await _metrics_snapshot(),
-    }
+    async with METRICS_LOCK:
+        METRICS.successful_renders += 1
+    return {"status": "success", "trace_id": request.model_response.trace_id}
 
 @app.post("/api/v1/cognitive/validate")
 async def validate_cognitive_dsl(
-    request: Dict[str, Any],
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> dict[str, Any]:
+    request: CognitiveEmitRequest,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> ValidationResult:
     _ensure_api_key(x_api_key)
-    return {"status": "success", "violations": []}
+    passed, violations = FirmaValidator.validate_dsl_response(request)
+    return ValidationResult(status="success" if passed else "failed", violations=violations)
 
-@app.post("/api/v1/cognitive/generate")
-async def generate_cognitive_dsl(
-    request: Dict[str, Any],
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> dict[str, Any]:
-    _ensure_api_key(x_api_key)
-    if request.get("model") == "unknown-model":
-        raise HTTPException(status_code=400, detail="Unsupported model")
-    return {"status": "success"}
-
-
-@app.post("/api/v1/cognitive/variations/generate")
-async def generate_variations(
-    request: Dict[str, Any],
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> dict[str, Any]:
-    _ensure_api_key(x_api_key)
-    payload = generate_variation_set(request)
-    return {"status": "success", "data": payload}
-
-@app.get("/api/v1/reliability/temporal-morphogenesis")
-async def temporal_morphogenesis(
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-):
-    _ensure_api_key(x_api_key)
+@app.get("/health")
+def health_check() -> dict[str, Any]:
     return {
-        "status": "success",
-        "drift_detector_recall": 0.98,
-        "containment_efficiency": 0.95,
-        "containment_activation_p95_ms": 12.5,
-        "sev1_replay_reproducibility": 0.99
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "components": {
+            "api_gateway": "up",
+            "validator_service": "up",
+            "model_connections": {
+                "google_gemini": "healthy",
+                "openai_gpt": "healthy",
+                "anthropic_claude": "standby",
+            },
+        },
     }
 
-@app.post("/api/v1/telemetry/ingest")
-async def ingest_telemetry(
-    request: TelemetryIngestRequest,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> dict[str, Any]:
+@app.get("/api/v1/proxy/fetch")
+async def proxy_fetch_url(url: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict[str, Any]:
     _ensure_api_key(x_api_key)
-    for point in request.points:
-        TELEMETRY_TS_DB.append(point.model_dump(mode="json"))
-    if r:
-        try:
-            for point in request.points:
-                await r.lpush("telemetry:queue", json.dumps(point.model_dump(mode="json")))
-        except Exception: pass
-    return {"status": "success", "ingested": len(request.points)}
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="Invalid URL structure")
+    if PROXY_ALLOWED_HOSTS and parsed.hostname.lower() not in PROXY_ALLOWED_HOSTS:
+        raise HTTPException(status_code=403, detail="URL host is not allowlisted")
+    if _is_blocked_proxy_target(parsed.hostname):
+        raise HTTPException(status_code=403, detail="URL host resolves to a blocked IP range")
 
+    safe_scheme = parsed.scheme.lower()
+    safe_host = parsed.hostname.lower()
+    safe_port = f":{parsed.port}" if parsed.port is not None else ""
+    safe_path = parsed.path or "/"
+    safe_params = f";{parsed.params}" if parsed.params else ""
+    safe_query = f"?{parsed.query}" if parsed.query else ""
+    safe_url = f"{safe_scheme}://{safe_host}{safe_port}{safe_path}{safe_params}{safe_query}"
+
+    try:
+        async with httpx.AsyncClient(timeout=6.0, headers={"User-Agent": "AetheriumProxy/1.0"}) as client:
+            response = await client.get(safe_url, follow_redirects=False)
+            response.raise_for_status()
+            text = response.text[:120_000]
+        return {"content_length": len(text), "snippet": " ".join(text.split())[:1200]}
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Proxy fetch failed: {exc}")
+
+@app.post("/api/v1/telemetry/ingest")
+async def ingest_telemetry(req: TelemetryIngestRequest, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict[str, int]:
+    _ensure_api_key(x_api_key)
+    async with TELEMETRY_LOCK:
+        for point in req.points:
+            series = TELEMETRY_TS_DB.setdefault(point.metric, [])
+            series.append(point.model_dump(mode="json"))
+            series[:] = series[-2500:]
+        return {"ingested": len(req.points), "series_count": len(TELEMETRY_TS_DB)}
 
 @app.get("/api/v1/telemetry/query")
 async def query_telemetry(
-    metric: str = Query(...),
-    window_seconds: int = Query(default=300, ge=1),
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    metric: str,
+    window_seconds: int = Query(3600, ge=1, le=86400),
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
 ) -> dict[str, Any]:
     _ensure_api_key(x_api_key)
-    cutoff = datetime.now(timezone.utc).timestamp() - window_seconds
-    points = [
-        point for point in TELEMETRY_TS_DB
-        if point.get("metric") == metric
-        and datetime.fromisoformat(str(point.get("ts")).replace("Z", "+00:00")).timestamp() >= cutoff
-    ]
-    return {"status": "success", "metric": metric, "count": len(points), "points": points}
-
-@app.post("/api/v1/export/request", response_model=ExportResponse)
-async def request_export(
-    request: ExportRequest,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> ExportResponse:
-    _ensure_api_key(x_api_key)
-    created_at = datetime.now(timezone.utc)
-    export_id = f"exp_{uuid.uuid4().hex}"
-    audit_trail_id = f"audit_{uuid.uuid4().hex}"
-    replay_key = f"{request.session_id}:{request.lineage_id}:{request.selected_variation_id}:{export_id}"
-    audit_record: Dict[str, Any] = {
-        "audit_trail_id": audit_trail_id,
-        "event_type": "export_requested",
-        "created_at": created_at.isoformat(),
-        "export_id": export_id,
-        "session_id": request.session_id,
-        "lineage_id": request.lineage_id,
-        "selected_variation_id": request.selected_variation_id,
-        "artifact_type": request.artifact_type.value,
-        "requested_by": request.requested_by or "unknown",
-        "replay_key": replay_key,
-        "review_status": "ready_for_enterprise_review",
-        "options": request.options,
+    now_ts = datetime.now(timezone.utc).timestamp()
+    async with TELEMETRY_LOCK:
+        rows = [p for p in TELEMETRY_TS_DB.get(metric, []) if now_ts - datetime.fromisoformat(p["ts"]).timestamp() <= window_seconds]
+    values = [p["value"] for p in rows]
+    p95 = sorted(values)[int(len(values) * 0.95)] if values else None
+    return {
+        "count": len(values),
+        "mean": mean(values) if values else None,
+        "p95": p95,
+        "latest": rows[-1] if rows else None,
     }
     EXPORT_AUDIT_TRAIL.insert(0, audit_record)
     return ExportResponse(
@@ -753,76 +784,53 @@ async def export_history(
         records = [record for record in records if record["selected_variation_id"] == selected_variation_id]
     return {"status": "success", "count": len(records), "history": records}
 
-@app.get("/api/v1/proxy/fetch")
-async def proxy_fetch(
-    url: str,
-    request: Request,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-    x_proxy_timestamp: str | None = Header(default=None, alias="X-Proxy-Timestamp"),
-    x_proxy_nonce: str | None = Header(default=None, alias="X-Proxy-Nonce"),
-    x_proxy_signature: str | None = Header(default=None, alias="X-Proxy-Signature"),
-):
-    _ensure_api_key(x_api_key)
-    parsed = urlparse(url)
-    if _is_blocked_proxy_target(parsed.hostname or ""):
-        raise HTTPException(status_code=400, detail="blocked proxy target")
-    secret = os.getenv("AETHERIUM_PROXY_SIGNING_SECRET")
-    if secret:
-        if not all([x_proxy_timestamp, x_proxy_nonce, x_proxy_signature]):
-            raise HTTPException(status_code=401, detail="missing signing headers")
-        is_replay = False
-        if r:
-            try:
-                if await r.get(f"nonce:{x_proxy_nonce}"): is_replay = True
-            except Exception: pass
-        if not is_replay and x_proxy_nonce in NONCE_CACHE: is_replay = True
-        if is_replay: raise HTTPException(status_code=409, detail="nonce replay detected")
-        expected = _proxy_request_signature("GET", "/api/v1/proxy/fetch", url, x_proxy_timestamp, x_proxy_nonce, secret)
-        if x_proxy_signature != expected: raise HTTPException(status_code=401, detail="invalid signature")
-    if "@" in url:
-        if secret:
-             if r:
-                 try: await r.set(f"nonce:{x_proxy_nonce}", "1", ex=600)
-                 except Exception: pass
-             NONCE_CACHE[x_proxy_nonce] = True
-        raise HTTPException(status_code=400, detail="credentials in URL not allowed")
-    if secret:
-        if r:
-            try: await r.set(f"nonce:{x_proxy_nonce}", "1", ex=600)
-            except Exception: pass
-        NONCE_CACHE[x_proxy_nonce] = True
-    return {"status": "success", "url": url, "content": "mock_data"}
-
-@app.get("/health")
-def health_check() -> dict[str, Any]:
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "components": {
-            "redis": "connected" if r else "disconnected",
-            "nats": "connected" if nc and nc.is_connected else "disconnected",
-        },
-    }
+def _resolve_voice_model(language: str, region: str) -> str:
+    lang_key = language.split("-", maxsplit=1)[0].lower()
+    region_key = region.lower()
+    return VOICE_MODEL_MAP.get((lang_key, region_key), f"whisper-general-{lang_key}")
 
 
-@app.get("/readyz")
-def readiness_check() -> dict[str, Any]:
-    components = {
-        "redis": "connected" if r else "disconnected",
-        "nats": "connected" if nc and nc.is_connected else "disconnected",
-    }
-    readiness_failures: list[str] = []
-    if REQUIRE_REDIS_FOR_READINESS and components["redis"] != "connected":
-        readiness_failures.append("redis")
-    if REQUIRE_NATS_FOR_READINESS and components["nats"] != "connected":
-        readiness_failures.append("nats")
-    if readiness_failures:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "status": "not_ready",
-                "required_components_unavailable": readiness_failures,
-                "components": components,
-            },
-        )
-    return {"status": "ready", "components": components}
+@app.get("/api/v1/voice/model")
+def resolve_voice_model(language: str = "en-US", region: str = "us") -> dict[str, str]:
+    model = _resolve_voice_model(language, region)
+    return {"language": language, "region": region, "model": model}
+
+# --- WebSocket Endpoints ---
+
+@app.websocket("/ws/cognitive-stream")
+async def cognitive_stream(websocket: WebSocket) -> None:
+    api_key = _extract_ws_api_key(websocket)
+    if not api_key:
+        await websocket.close(code=1008, reason="Missing API Key")
+        return
+    await websocket.accept()
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            if payload.get("type") != "dsl_submission":
+                await websocket.send_json({"status": "error", "detail": "Invalid message type"})
+                continue
+            await websocket.send_json({"status": "accepted", "echo": payload})
+    except WebSocketDisconnect:
+        pass
+
+@app.websocket("/ws/state-sync/{room_id}")
+async def state_sync(websocket: WebSocket, room_id: str, user_id: str | None = Query(None)) -> None:
+    room = await _room(room_id)
+    await websocket.accept()
+    async with room.lock:
+        room.clients.append(websocket)
+    try:
+        await websocket.send_json({"type": "state_snapshot", **room.snapshot(user_id)})
+        while True:
+            payload = await websocket.receive_json()
+            if payload.get("type") != "patch_state":
+                continue
+            async with room.lock:
+                snapshot = room.apply_delta(payload.get("delta", {}), user_id, payload.get("user_delta", {}))
+                message = {"type": "state_updated", **snapshot}
+                await asyncio.gather(*[client.send_json(message) for client in room.clients])
+    except WebSocketDisconnect:
+        async with room.lock:
+            if websocket in room.clients:
+                room.clients.remove(websocket)

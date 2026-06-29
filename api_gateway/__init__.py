@@ -1,1 +1,1 @@
-"""API Gateway package for Aetherium Manifest."""
+"""Aetherium API gateway package."""

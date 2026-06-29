@@ -1,849 +1,117 @@
 <!DOCTYPE html>
 <html lang="th">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aetherium Manifest | Light-Native Runtime Surface</title>
-    <link rel="manifest" href="/app.webmanifest">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&family=Noto+Sans+Thai:wght@300;400;700&display=swap');
-
-        :root { color-scheme: dark; }
-        * { box-sizing: border-box; }
-
-        body {
-            margin: 0;
-            overflow: hidden;
-            background-color: #030305;
-            color: #e0e0ff;
-            font-family: 'Noto Sans Thai', 'JetBrains Mono', monospace;
-            user-select: none;
-        }
-
-        #canvas-container {
-            position: fixed;
-            inset: 0;
-            z-index: 0;
-        }
-
-        .glass-panel {
-            background: rgba(12, 14, 24, 0.35);
-            backdrop-filter: blur(11px);
-            -webkit-backdrop-filter: blur(11px);
-            border: 1px solid rgba(130, 160, 255, 0.14);
-            box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
-        }
-
-        #landing-layer {
-            position: fixed;
-            inset: 0;
-            z-index: 15;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1.25rem;
-            opacity: 1;
-            pointer-events: auto;
-            transition: opacity 280ms ease;
-        }
-
-        body[data-ui-mode="studio"] #landing-layer {
-            opacity: 0;
-            pointer-events: none;
-        }
-
-        .status-dot {
-            width: 0.55rem;
-            height: 0.55rem;
-            border-radius: 999px;
-            display: inline-block;
-            margin-right: 0.45rem;
-            box-shadow: 0 0 10px rgba(130, 190, 255, 0.65);
-        }
-
-        .status-dot.ok { background: #34d399; }
-        .status-dot.warn { background: #facc15; }
-        .status-dot.err { background: #f87171; }
-
-        #studio-layer {
-            position: fixed;
-            top: 0;
-            right: 0;
-            height: 100vh;
-            width: min(94vw, 52rem);
-            z-index: 30;
-            transform: translateX(102%);
-            transition: transform 320ms ease;
-            pointer-events: none;
-        }
-
-        body[data-ui-mode="studio"] #studio-layer {
-            transform: translateX(0);
-            pointer-events: auto;
-        }
-
-        #studio-backdrop {
-            position: fixed;
-            inset: 0;
-            z-index: 25;
-            background: rgba(0, 0, 0, 0.35);
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 220ms ease;
-        }
-
-        body[data-ui-mode="studio"] #studio-backdrop {
-            opacity: 1;
-            pointer-events: auto;
-        }
-
-        .lineage-node { transition: all 0.25s ease; }
-        .lineage-node:hover { transform: translateY(-1px); box-shadow: 0 0 18px rgba(130, 190, 255, 0.45); }
-
-        .state-chip.active {
-            color: #e5edff;
-            border-color: rgba(130, 190, 255, 0.55);
-            background: rgba(130, 190, 255, 0.16);
-            text-shadow: 0 0 10px rgba(130, 190, 255, 0.7);
-        }
-
-        #manifestation-overlay {
-            position: fixed;
-            inset: 0;
-            z-index: 4;
-            pointer-events: none;
-            opacity: 0;
-            transition: opacity 700ms ease;
-            background: radial-gradient(circle at center, rgba(130,190,255,0.28), rgba(0,0,0,0) 48%);
-        }
-
-        #branch-panel { transition: opacity 500ms ease; }
-
-        .branch-btn {
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255,255,255,0.02));
-            transition: all .25s ease;
-        }
-
-        .branch-btn:hover {
-            border-color: rgba(123, 188, 255, 0.58);
-            transform: scale(1.04);
-            box-shadow: 0 0 22px rgba(123, 188, 255, 0.22);
-        }
-
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 rgba(96,165,250,0.1); }
-            50% { box-shadow: 0 0 14px rgba(96,165,250,0.45); }
-            100% { box-shadow: 0 0 0 rgba(96,165,250,0.1); }
-        }
-
-        .listening-mode { animation: pulse 1.8s infinite; }
-        .voice-active { color: #fda4af !important; text-shadow: 0 0 12px rgba(251,113,133,0.8); }
-
-        .quick-chip.active { border-color: rgba(130, 190, 255, 0.7); background: rgba(130, 190, 255, 0.2); color: #eff6ff; }
-
-        button:focus-visible,
-        input:focus-visible {
-            outline: 2px solid rgba(147, 197, 253, 0.9);
-            outline-offset: 2px;
-            box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.25);
-        }
-
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 2px; }
-
-        @media (prefers-reduced-motion: reduce) {
-            *, *::before, *::after {
-                animation-duration: 0.01ms !important;
-                animation-iteration-count: 1 !important;
-                transition-duration: 0.01ms !important;
-                scroll-behavior: auto !important;
-            }
-
-            .listening-mode { animation: none !important; }
-        }
-    </style>
-</head>
-<body class="text-sm" data-ui-mode="landing">
-    <div id="canvas-container"></div>
-    <div id="manifestation-overlay"></div>
-
-    <section id="landing-layer" aria-label="Landing mode">
-        <div class="glass-panel rounded-3xl p-6 md:p-8 w-[min(95vw,58rem)]">
-            <div class="flex items-center justify-between mb-5">
-                <span class="text-[11px] tracking-[0.18em] text-blue-100/80">AETHERIUM MANIFEST</span>
-                <button class="text-xs px-3 py-1.5 rounded-full border border-blue-300/40 text-blue-100 hover:bg-blue-400/15" onclick="openStudio(true)">Advanced Studio</button>
-            </div>
-            <h1 class="text-2xl md:text-4xl font-bold mb-2">Light-native runtime for real user intent.</h1>
-            <p class="text-white/70 max-w-2xl">พิมพ์สิ่งที่ต้องการ แล้วให้แสงจัดรูปแบบ intent เป็นภาพ, UI concept, คำตอบค้นหา, หรือ lighting behavior — โดยไม่ต้องเปิด debug panel ก่อนเริ่ม.</p>
-
-            <div class="grid md:grid-cols-2 gap-2 mt-5" id="starter-prompts"></div>
-
-            <div id="landing-status" class="mt-5 text-xs text-white/75 flex flex-wrap gap-4"></div>
-        </div>
-    </section>
-
-    <div id="studio-backdrop" onclick="setUiMode('landing')"></div>
-
-    <section id="studio-layer" class="p-4" aria-label="Studio mode">
-        <aside class="glass-panel rounded-2xl p-4 h-full overflow-y-auto flex flex-col gap-3">
-            <div class="flex items-center justify-between">
-                <div class="font-mono text-xs text-white/70 tracking-[0.18em]">SETTINGS / STUDIO</div>
-                <button aria-label="Close studio panel" class="w-8 h-8 rounded-full hover:bg-white/10 text-white/60" onclick="setUiMode('landing')" title="Close settings">
-                    <i class="fas fa-xmark"></i>
-                </button>
-            </div>
-
-            <div id="connection-banner" class="rounded-lg border border-white/15 px-2.5 py-2 text-xs text-white/70">Checking API / WS connection...</div>
-
-            <div class="grid grid-cols-2 text-xs gap-y-1">
-                <span class="text-gray-400">RUNTIME STATE</span>
-                <span id="sys-state" class="text-right text-emerald-300">IDLE</span>
-                <span class="text-gray-400">INTENT ROUTE</span>
-                <span id="sys-route" class="text-right text-blue-300">pure_light</span>
-                <span class="text-gray-400">GOVERNOR</span>
-                <span id="sys-gov" class="text-right text-yellow-300">awaiting</span>
-            </div>
-
-            <div class="flex flex-wrap gap-1.5 font-mono text-[10px]">
-                <span class="state-chip rounded-full border border-white/15 px-2 py-1" data-state="LISTENING">LISTENING</span>
-                <span class="state-chip rounded-full border border-white/15 px-2 py-1" data-state="INTERPRETING">INTERPRETING</span>
-                <span class="state-chip rounded-full border border-white/15 px-2 py-1" data-state="CONVERGING">CONVERGING</span>
-                <span class="state-chip rounded-full border border-white/15 px-2 py-1" data-state="PROPOSING">PROPOSING</span>
-                <span class="state-chip rounded-full border border-white/15 px-2 py-1" data-state="MANIFESTING">MANIFESTING</span>
-                <span class="state-chip rounded-full border border-white/15 px-2 py-1" data-state="REFINING">REFINING</span>
-                <span class="state-chip rounded-full border border-white/15 px-2 py-1" data-state="EXPORTING">EXPORTING</span>
-                <span class="state-chip rounded-full border border-white/15 px-2 py-1" data-state="NIRODHA">NIRODHA</span>
-            </div>
-
-            <section id="branch-panel" class="opacity-0 pointer-events-none">
-                <div id="branch-buttons" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div>
-            </section>
-
-            <section id="terminal-logs" class="glass-panel rounded-xl p-3 h-44 overflow-y-auto font-mono text-[10px] text-blue-100"></section>
-
-            <section class="glass-panel rounded-xl p-4 min-h-[16rem] overflow-y-auto">
-                <div class="font-mono text-xs text-cyan-200 mb-3 border-b border-white/10 pb-2 flex justify-between items-center">
-                    <span><i class="fas fa-code-branch mr-2"></i>DESIGN LINEAGE</span>
-                    <div class="flex items-center gap-2">
-                        <span id="lineage-count" class="text-white/45">1 node</span>
-                        <button class="text-[10px] px-2 py-1 rounded border border-cyan-300/40 hover:bg-cyan-400/10" onclick="exportManifest()">EXPORT</button>
-                    </div>
-                </div>
-                <div id="lineage-container" class="space-y-2"></div>
-            </section>
-
-            <section id="scholar-panel" class="glass-panel rounded-xl p-4 hidden min-h-[12rem]">
-                <div class="font-mono text-xs text-fuchsia-200 mb-2 border-b border-fuchsia-300/20 pb-2 flex justify-between">
-                    <span><i class="fas fa-book-open mr-2"></i>SCHOLAR AGENT</span>
-                    <span class="text-fuchsia-100/60">Search Layer</span>
-                </div>
-                <div id="scholar-content" class="text-xs leading-relaxed text-gray-200 space-y-2"></div>
-            </section>
-        </aside>
-    </section>
-
-    <footer class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-[min(95vw,64rem)]">
-        <div id="attachment-preview" class="flex gap-2 mb-2"></div>
-        <div class="mb-2 flex flex-wrap gap-1.5" id="quick-modes"></div>
-        <div id="composer" class="glass-panel rounded-2xl p-2.5 flex items-center gap-2 listening-mode">
-            <button aria-label="Open advanced studio" class="w-10 h-10 rounded-full hover:bg-white/10 text-white/60 hover:text-white" onclick="openStudio(true)" title="Advanced Studio">
-                <i class="fas fa-sliders"></i>
-            </button>
-            <button aria-label="Attach file" class="w-10 h-10 rounded-full hover:bg-white/10 text-white/60 hover:text-white" onclick="triggerAttach()" title="Attach">
-                <i class="fas fa-paperclip"></i>
-            </button>
-            <button id="voice-btn" aria-label="Toggle voice input" class="w-10 h-10 rounded-full hover:bg-white/10 text-white/60 hover:text-white" onclick="toggleVoice()" title="Voice">
-                <i class="fas fa-microphone"></i>
-            </button>
-            <input id="intent-input" type="text" class="flex-1 bg-transparent outline-none border-0 text-white placeholder-white/30 px-2" placeholder="พิมพ์สิ่งที่ต้องการ..." oninput="enterListening()" onkeydown="handleKeyDown(event)">
-            <button class="bg-blue-500/25 border border-blue-300/40 text-blue-100 px-4 py-2 rounded-xl font-mono text-xs" onclick="emitIntent()">Create</button>
-        </div>
-        <div id="ux-state" class="mt-2 text-center text-xs text-white/60"></div>
-    </footer>
-
-    <script>
-        const STARTER_PROMPTS = [
-            { label: 'สร้างภาพ', intent: 'สร้างภาพ key visual สำหรับ launch campaign โทน cinematic blue' },
-            { label: 'สร้าง UI concept', intent: 'สร้าง UI concept หน้า dashboard แบบ calm futuristic สำหรับ product analytics' },
-            { label: 'ค้นหา', intent: 'ค้นหาเทรนด์ AI interface ล่าสุดและสรุป insight ที่ใช้ได้จริง 3 ข้อ' },
-            { label: 'ควบคุมแสง', intent: 'ควบคุมแสงให้เป็นโหมด focus ตอนทำงานลึก และ calm ตอนพักสายตา' }
-        ];
-
-        const QUICK_MODES = [
-            { key: 'pure_light', text: 'Pure Light' },
-            { key: 'image', text: 'Image' },
-            { key: 'search', text: 'Search' },
-            { key: 'video', text: 'Motion' }
-        ];
-
-        const container = document.getElementById('canvas-container');
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        container.appendChild(renderer.domElement);
-
-        const qualityTier = window.matchMedia('(max-width: 768px), (pointer: coarse)').matches ? 'mobile' : 'desktop';
-        const particleCount = qualityTier === 'mobile' ? 9000 : 18000;
-        const geometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(particleCount * 3);
-        const targets = new Float32Array(particleCount * 3);
-        const colors = new Float32Array(particleCount * 3);
-
-        for (let i = 0; i < particleCount; i++) {
-            const i3 = i * 3;
-            const x = (Math.random() - 0.5) * 60;
-            const y = (Math.random() - 0.5) * 60;
-            const z = (Math.random() - 0.5) * 60;
-            positions[i3] = targets[i3] = x;
-            positions[i3 + 1] = targets[i3 + 1] = y;
-            positions[i3 + 2] = targets[i3 + 2] = z;
-            colors[i3] = 0.08; colors[i3 + 1] = 0.12; colors[i3 + 2] = 0.2;
-        }
-
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-        const points = new THREE.Points(geometry, new THREE.PointsMaterial({
-            size: qualityTier === 'mobile' ? 0.08 : 0.06,
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.72,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
-        }));
-        scene.add(points);
-        camera.position.z = 21;
-
-        const STATE_COLORS = {
-            IDLE: [0.08, 0.12, 0.2],
-            EVALUATING: [0.62, 0.31, 0.93],
-            MANIFESTING: [0.9, 0.92, 1],
-            STREAMING: [0.98, 0.53, 0.34],
-            SEARCHING: [0.52, 0.83, 1],
-            LISTENING: [0.32, 0.6, 1],
-            INTERPRETING: [0.86, 0.3, 0.7],
-            CONVERGING: [0.2, 0.8, 0.95],
-            PROPOSING: [1.0, 0.83, 0.42],
-            REFINING: [0.3, 0.9, 0.7],
-            EXPORTING: [1, 1, 1],
-            NIRODHA: [0.09, 0.08, 0.14]
-        };
-
-        let runtimeState = 'IDLE';
-        let flowState = 'NIRODHA';
-        let route = 'pure_light';
-        let voiceActive = false;
-        let isProcessing = false;
-        let uiMode = 'landing';
-        let lineageCounter = 0;
-        const nodes = [{ id: 'genesis', label: 'Genesis Root', deleted: false }];
-        const variationRegistry = {};
-        const variationSets = [];
-        let branchContext = 'genesis';
-        let hasSubmittedIntent = false;
-        let apiStatus = 'unknown';
-        let wsStatus = 'unknown';
-        let wsClient = null;
-        let lastFrameTime = null;
-
-        function setUiMode(mode) {
-            uiMode = mode === 'studio' ? 'studio' : 'landing';
-            document.body.dataset.uiMode = uiMode;
-            if (uiMode === 'landing') {
-                document.getElementById('branch-panel').classList.add('opacity-0', 'pointer-events-none');
-            }
-        }
-
-        function openStudio(force = false) {
-            if (!force && !hasSubmittedIntent) return;
-            setUiMode('studio');
-        }
-
-        function updateUxState(message, tone = 'normal') {
-            const el = document.getElementById('ux-state');
-            const toneClass = tone === 'error' ? 'text-red-300' : tone === 'warn' ? 'text-yellow-200' : 'text-white/60';
-            el.className = `mt-2 text-center text-xs ${toneClass}`;
-            el.textContent = message;
-        }
-
-        function logTerminal(message, level = 'info') {
-            const terminal = document.getElementById('terminal-logs');
-            const map = {
-                info: 'text-blue-200',
-                warn: 'text-yellow-300',
-                success: 'text-emerald-300',
-                system: 'text-purple-300',
-                error: 'text-red-300'
-            };
-            const row = document.createElement('div');
-            row.className = `${map[level] || map.info} mt-1`;
-            row.textContent = `> ${message}`;
-            terminal.appendChild(row);
-            terminal.scrollTop = terminal.scrollHeight;
-        }
-
-        function syncStateChips(active) {
-            document.querySelectorAll('.state-chip').forEach((chip) => {
-                chip.classList.toggle('active', chip.dataset.state === active);
-            });
-        }
-
-        function setRuntimeState(next) {
-            runtimeState = next;
-            document.getElementById('sys-state').textContent = next;
-        }
-
-        function setFlowState(next) {
-            flowState = next;
-            syncStateChips(next);
-        }
-
-        function setRoute(next) {
-            route = next;
-            document.getElementById('sys-route').textContent = next;
-            document.querySelectorAll('.quick-chip').forEach((chip) => {
-                chip.classList.toggle('active', chip.dataset.mode === next);
-            });
-        }
-
-        function setGovernor(text) {
-            document.getElementById('sys-gov').textContent = text;
-        }
-
-        function enterListening() {
-            if (isProcessing || flowState === 'LISTENING') return;
-            setFlowState('LISTENING');
-            logTerminal('[LIGHT] Intake active: signal becoming intent.', 'info');
-        }
-
-        function handleKeyDown(event) {
-            if (event.key === 'Enter') emitIntent();
-        }
-
-        function toggleVoice() {
-            voiceActive = !voiceActive;
-            const btn = document.getElementById('voice-btn');
-            const input = document.getElementById('intent-input');
-            btn.classList.toggle('voice-active', voiceActive);
-            input.placeholder = voiceActive ? 'กำลังฟังเสียง... พูดเพื่อส่งเจตนา' : 'พิมพ์สิ่งที่ต้องการ...';
-            logTerminal(voiceActive ? '[VOICE] Input stream connected.' : '[VOICE] Input stream closed.', 'system');
-        }
-
-        function triggerAttach() {
-            const preview = document.getElementById('attachment-preview');
-            const item = document.createElement('div');
-            item.className = 'glass-panel rounded-full px-3 py-1 text-xs text-blue-100 border border-blue-200/20';
-            item.innerHTML = '<i class="fas fa-file-circle-plus mr-1"></i> style_ref.pdf <button aria-label="Remove attachment" class="ml-2 text-white/80 hover:text-white" onclick="this.parentElement.remove()"><i class="fas fa-xmark"></i></button>';
-            preview.appendChild(item);
-            logTerminal('[ATTACH] Reference file added to intent envelope.', 'info');
-        }
-
-        function inferRoute(intent) {
-            const lower = intent.toLowerCase();
-            if (/ค้นหา|search|อ้างอิง|reference|scholar/.test(lower)) return 'search';
-            if (/วิดีโอ|video|motion|flow/.test(lower)) return 'video';
-            if (/ภาพ|image|poster|visual|ui/.test(lower)) return 'image';
-            return route || 'pure_light';
-        }
-
-        function mapGoalType(mode) {
-            if (mode === 'video') return 'video';
-            if (mode === 'image') return 'image';
-            if (mode === 'search') return 'search';
-            return 'pure_light';
-        }
-
-        async function requestVariationSet(intent, mode) {
-            const payload = {
-                goal_type: mapGoalType(mode),
-                brand_profile: { palette_lock: mode === 'image' },
-                safety_profile: { strict_mode: mode === 'video', max_branches: mode === 'search' ? 4 : 6 },
-                lineage: { active_context_id: branchContext, intent },
-            };
-            try {
-                const response = await fetch('/api/v1/cognitive/variations/generate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-API-Key': 'dev-local-key',
-                    },
-                    body: JSON.stringify(payload),
-                });
-                if (!response.ok) throw new Error(`variation endpoint ${response.status}`);
-                const body = await response.json();
-                return body.data;
-            } catch (error) {
-                logTerminal(`[BRANCH] Variation API unavailable (${error.message}), fallback local set.`, 'warn');
-                const fallback = ['CALM', 'CINEMATIC', 'MINIMAL', 'SACRED'];
-                return {
-                    set_id: `local_${Date.now()}`,
-                    parent_id: branchContext,
-                    variations: fallback.map((preset, idx) => ({
-                        variation_id: `local_${branchContext}_${idx + 1}`,
-                        parent_id: branchContext,
-                        preset,
-                        constraints_delta: { fallback: true },
-                    })),
-                };
-            }
-        }
-
-        function renderBranchPanel(variationSet) {
-            variationSets.push(variationSet);
-            variationSet.variations.forEach((variation) => { variationRegistry[variation.variation_id] = variation; });
-
-            const branchPanel = document.getElementById('branch-panel');
-            const buttons = document.getElementById('branch-buttons');
-            buttons.innerHTML = '';
-            variationSet.variations.forEach((variation) => {
-                const button = document.createElement('button');
-                button.className = 'branch-btn rounded-xl px-3 py-3 font-mono text-xs text-blue-100 text-left';
-                button.onclick = () => selectBranch(variation.variation_id);
-                button.innerHTML = `
-                    <div class="font-bold">${variation.preset}</div>
-                    <div class="text-[10px] text-white/70 mt-1">${variation.variation_id}</div>
-                    <div class="text-[10px] text-white/55 mt-1">Δ ${Object.keys(variation.constraints_delta || {}).join(', ') || 'none'}</div>
-                `;
-                buttons.appendChild(button);
-            });
-
-            if (uiMode === 'studio') {
-                branchPanel.classList.remove('opacity-0', 'pointer-events-none');
-            }
-            logTerminal(`[BRANCH] Generated ${variationSet.variations.length} branches from ${variationSet.parent_id}.`, 'system');
-        }
-
-        function setStarterPrompt(intent) {
-            const input = document.getElementById('intent-input');
-            input.value = intent;
-            input.focus();
-            updateUxState('พร้อมแล้ว กด Create เพื่อ manifest intent นี้');
-        }
-
-        function emitIntent() {
-            if (isProcessing) return;
-            const input = document.getElementById('intent-input');
-            const intent = input.value.trim() || (voiceActive ? 'voice intent' : '');
-            if (!intent) {
-                updateUxState('พิมพ์ intent ก่อนเริ่มใช้งาน', 'warn');
-                return;
-            }
-
-            hasSubmittedIntent = true;
-            isProcessing = true;
-            setUiMode('studio');
-            setRuntimeState('EVALUATING');
-            setFlowState('INTERPRETING');
-            const mode = inferRoute(intent);
-            setRoute(mode);
-            setGovernor('proposed');
-
-            logTerminal(`[INTENT] ${intent}`);
-            logTerminal('[CONTRACT] Contract Proposed -> ai_particle_control_contract_v1', 'system');
-            logTerminal('[GOVERNOR] Analyzing...', 'warn');
-            updateUxState('Intent submitted — runtime กำลังแปลงสู่แสง');
-
-            input.value = '';
-            if (voiceActive) toggleVoice();
-
-            setTimeout(() => {
-                setFlowState('PROPOSING');
-                setGovernor('verified');
-                logTerminal('[GOVERNOR] Approved. Manifest rights granted.', 'success');
-                runManifest(intent, mode);
-            }, 950);
-        }
-
-        async function runManifest(intent, mode) {
-            setRuntimeState(mode === 'video' ? 'STREAMING' : mode === 'search' ? 'SEARCHING' : 'MANIFESTING');
-            setFlowState('CONVERGING');
-            createLineageNode(intent, mode);
-            const variationSet = await requestVariationSet(intent, mode);
-            renderBranchPanel(variationSet);
-
-            if (mode === 'search') {
-                renderScholar(intent);
-            } else {
-                document.getElementById('scholar-panel').classList.add('hidden');
-            }
-
-            setTimeout(() => {
-                setFlowState('MANIFESTING');
-                document.getElementById('manifestation-overlay').style.opacity = '1';
-                logTerminal(`[MANIFEST] ${mode} materializing on light surface.`, 'success');
-                updateUxState('Manifest complete. คุณสามารถ refine ต่อได้ใน Studio');
-                isProcessing = false;
-            }, 1000);
-        }
-
-        function renderScholar(intent) {
-            const panel = document.getElementById('scholar-panel');
-            const content = document.getElementById('scholar-content');
-            panel.classList.remove('hidden');
-            content.innerHTML = `
-                <div class="text-white">Query: ${intent}</div>
-                <div>• Source path: Scholar Agent → Google Search connector (simulated)</div>
-                <div>• Governor citation gate: PASS</div>
-                <div class="text-fuchsia-100/80">สรุป: intent ถูกแยกเป็นเส้นทางค้นหา และไม่รบกวนเส้นทาง image/video manifest</div>
-            `;
-            logTerminal('[SCHOLAR] Search branch opened in side panel.', 'system');
-        }
-
-        function createLineageNode(intent, mode) {
-            lineageCounter += 1;
-            const id = `n${lineageCounter}`;
-            nodes.push({ id, label: intent, mode, parent: branchContext, deleted: false, manifest_context: branchContext });
-            branchContext = id;
-            renderLineage();
-        }
-
-        function renderLineage() {
-            const lineup = document.getElementById('lineage-container');
-            lineup.innerHTML = '';
-            const alive = nodes.filter((n) => !n.deleted);
-            if (!alive.length) {
-                lineup.innerHTML = '<div class="text-xs text-white/55">ยังไม่มี lineage node</div>';
-                return;
-            }
-
-            alive.forEach((node) => {
-                const row = document.createElement('div');
-                row.className = 'lineage-node flex items-center gap-2 rounded-lg border border-white/10 px-2 py-1.5 bg-black/20';
-                row.innerHTML = `
-                    <button aria-label="Time shift to ${node.id}" class="w-6 h-6 rounded-full border border-blue-300/40 text-[10px]" onclick="timeShift('${node.id}')"><i class="fas fa-circle-dot"></i></button>
-                    <div class="text-xs text-white/80 truncate flex-1">${node.id === 'genesis' ? 'Genesis Root' : `${node.label.slice(0, 35)} (${node.mode})`}</div>
-                    ${node.id === 'genesis' ? '' : `<button aria-label="Delete node ${node.id}" class="text-white/40 hover:text-red-300" onclick="deleteNode('${node.id}')"><i class='fas fa-trash'></i></button>`}
-                `;
-                lineup.appendChild(row);
-            });
-            document.getElementById('lineage-count').textContent = `${alive.length} node${alive.length > 1 ? 's' : ''}`;
-        }
-
-        function timeShift(id) {
-            branchContext = id;
-            setFlowState('REFINING');
-            setRuntimeState('MANIFESTING');
-            logTerminal(`[LINEAGE] Time-shifting to ${id}. Ready to branch again.`, 'system');
-        }
-
-        function deleteNode(id) {
-            const node = nodes.find((n) => n.id === id);
-            if (!node) return;
-            node.deleted = true;
-            if (branchContext === id) branchContext = node.parent || 'genesis';
-            logTerminal(`[LINEAGE] Branch ${id} pruned from design tree.`, 'warn');
-            renderLineage();
-        }
-
-        function selectBranch(variationId) {
-            const selected = variationRegistry[variationId];
-            if (!selected) return;
-            branchContext = selected.variation_id;
-            document.getElementById('branch-panel').classList.add('opacity-0', 'pointer-events-none');
-            setFlowState('REFINING');
-            logTerminal(`[BRANCH] Selected ${selected.preset} (${selected.variation_id}), context anchored to parent ${selected.parent_id}.`, 'success');
-        }
-
-        function exportManifest() {
-            const payload = {
-                exported_at: new Date().toISOString(),
-                replay_context: branchContext,
-                lineage_nodes: nodes,
-                variation_sets: variationSets,
-            };
-            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const anchor = document.createElement('a');
-            anchor.href = url;
-            anchor.download = `aetherium_manifest_${Date.now()}.json`;
-            anchor.click();
-            URL.revokeObjectURL(url);
-            logTerminal(`[EXPORT] Manifest exported with replay context ${branchContext}.`, 'system');
-        }
-
-        function updateTargetsByState(nowSeconds) {
-            const color = STATE_COLORS[flowState] || STATE_COLORS.IDLE;
-            for (let i = 0; i < particleCount; i++) {
-                const i3 = i * 3;
-                if (flowState === 'INTERPRETING' || runtimeState === 'EVALUATING') {
-                    const r = Math.random() * 4;
-                    const t = Math.random() * Math.PI * 2;
-                    const p = Math.acos(2 * Math.random() - 1);
-                    targets[i3] = r * Math.sin(p) * Math.cos(t);
-                    targets[i3 + 1] = r * Math.sin(p) * Math.sin(t);
-                    targets[i3 + 2] = r * Math.cos(p);
-                } else if (flowState === 'CONVERGING') {
-                    const cluster = i % 4;
-                    const dx = (cluster - 1.5) * 6;
-                    targets[i3] = dx + (Math.random() - 0.5) * 2;
-                    targets[i3 + 1] = (Math.random() - 0.5) * 3;
-                    targets[i3 + 2] = (Math.random() - 0.5) * 3;
-                } else if (runtimeState === 'STREAMING') {
-                    targets[i3] = Math.sin((i / particleCount) * Math.PI * 12 + nowSeconds * 1.7) * 8;
-                    targets[i3 + 1] = ((i / particleCount) * 22) - 11;
-                    targets[i3 + 2] = Math.cos((i / particleCount) * Math.PI * 12 + nowSeconds * 1.7) * 8;
-                } else if (runtimeState === 'SEARCHING') {
-                    const ring = 11;
-                    const a = (i / particleCount) * Math.PI * 2;
-                    targets[i3] = Math.cos(a) * ring;
-                    targets[i3 + 1] = Math.sin(a) * ring;
-                    targets[i3 + 2] = Math.sin(a * 8) * 0.8;
-                } else if (runtimeState === 'MANIFESTING') {
-                    targets[i3] = (Math.random() - 0.5) * 18;
-                    targets[i3 + 1] = (Math.random() - 0.5) * 10;
-                    targets[i3 + 2] = (Math.random() - 0.5) * 1.5;
-                } else {
-                    targets[i3] = (Math.random() - 0.5) * 48;
-                    targets[i3 + 1] = (Math.random() - 0.5) * 48;
-                    targets[i3 + 2] = (Math.random() - 0.5) * 48;
-                }
-
-                colors[i3] += (color[0] - colors[i3]) * 0.03;
-                colors[i3 + 1] += (color[1] - colors[i3 + 1]) * 0.03;
-                colors[i3 + 2] += (color[2] - colors[i3 + 2]) * 0.03;
-            }
-        }
-
-        function animate(timestamp) {
-            requestAnimationFrame(animate);
-            const nowSeconds = timestamp * 0.001;
-            const dt = lastFrameTime === null ? 0.016 : Math.min((timestamp - lastFrameTime) / 1000, 0.05);
-            lastFrameTime = timestamp;
-
-            updateTargetsByState(nowSeconds);
-            const pos = geometry.attributes.position.array;
-            const blend = Math.min(dt * 2.2, 0.07);
-            for (let i = 0; i < particleCount; i++) {
-                const i3 = i * 3;
-                pos[i3] += (targets[i3] - pos[i3]) * blend;
-                pos[i3 + 1] += (targets[i3 + 1] - pos[i3 + 1]) * blend;
-                pos[i3 + 2] += (targets[i3 + 2] - pos[i3 + 2]) * blend;
-            }
-            points.rotation.y += dt * 0.08;
-            geometry.attributes.position.needsUpdate = true;
-            geometry.attributes.color.needsUpdate = true;
-            renderer.render(scene, camera);
-        }
-
-        async function checkApiStatus() {
-            try {
-                const res = await fetch('/health');
-                apiStatus = res.ok ? 'online' : 'degraded';
-            } catch (error) {
-                apiStatus = navigator.onLine ? 'offline' : 'network_offline';
-            }
-            updateConnectionUI();
-        }
-
-        function connectWsStatus() {
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-            const wsUrl = `${wsProtocol}://${window.location.host}/ws/cognitive-stream`;
-            try {
-                wsClient = new WebSocket(wsUrl);
-                wsStatus = 'connecting';
-                wsClient.onopen = () => { wsStatus = 'online'; updateConnectionUI(); };
-                wsClient.onerror = () => { wsStatus = 'error'; updateConnectionUI(); };
-                wsClient.onclose = () => { wsStatus = 'offline'; updateConnectionUI(); };
-            } catch (error) {
-                wsStatus = 'offline';
-                updateConnectionUI();
-            }
-            updateConnectionUI();
-        }
-
-        function updateConnectionUI() {
-            const landingStatus = document.getElementById('landing-status');
-            const banner = document.getElementById('connection-banner');
-            const apiDot = apiStatus === 'online' ? 'ok' : (apiStatus === 'unknown' ? 'warn' : 'err');
-            const wsDot = wsStatus === 'online' ? 'ok' : (wsStatus === 'connecting' || wsStatus === 'unknown' ? 'warn' : 'err');
-            landingStatus.innerHTML = `
-                <span><span class="status-dot ${apiDot}"></span>API: ${apiStatus}</span>
-                <span><span class="status-dot ${wsDot}"></span>WS: ${wsStatus}</span>
-                <span><span class="status-dot ok"></span>Quality: ${qualityTier} (${particleCount.toLocaleString()} particles)</span>
-            `;
-
-            if (!navigator.onLine) {
-                banner.textContent = 'Offline mode: ทำงานบน local fallback และ cache เท่านั้น';
-                banner.className = 'rounded-lg border border-red-300/35 bg-red-500/10 px-2.5 py-2 text-xs text-red-200';
-                updateUxState('คุณออฟไลน์อยู่ ผลลัพธ์บางอย่างจะ fallback', 'error');
-                return;
-            }
-
-            if (apiStatus !== 'online' || (wsStatus !== 'online' && wsStatus !== 'connecting')) {
-                banner.textContent = 'Connection degraded: runtime จะใช้ fallback/จำลองในบางเส้นทาง';
-                banner.className = 'rounded-lg border border-yellow-300/35 bg-yellow-500/10 px-2.5 py-2 text-xs text-yellow-100';
-                return;
-            }
-
-            banner.textContent = 'All systems ready: API + WS available';
-            banner.className = 'rounded-lg border border-emerald-300/35 bg-emerald-500/10 px-2.5 py-2 text-xs text-emerald-100';
-        }
-
-        function initStarterPrompts() {
-            const host = document.getElementById('starter-prompts');
-            host.innerHTML = '';
-            STARTER_PROMPTS.forEach((item) => {
-                const button = document.createElement('button');
-                button.className = 'text-left rounded-xl border border-white/15 bg-black/25 hover:bg-white/10 px-4 py-3';
-                button.innerHTML = `<div class="text-blue-100 font-semibold">${item.label}</div><div class="text-white/60 text-xs mt-1 truncate">${item.intent}</div>`;
-                button.onclick = () => setStarterPrompt(item.intent);
-                host.appendChild(button);
-            });
-        }
-
-        function initQuickModes() {
-            const host = document.getElementById('quick-modes');
-            host.innerHTML = '';
-            QUICK_MODES.forEach((item) => {
-                const btn = document.createElement('button');
-                btn.className = 'quick-chip rounded-full border border-white/20 text-xs text-white/75 px-3 py-1.5 hover:border-blue-200/55';
-                btn.dataset.mode = item.key;
-                btn.textContent = item.text;
-                btn.onclick = () => {
-                    setRoute(item.key);
-                    updateUxState(`Quick mode set: ${item.text}`);
-                };
-                host.appendChild(btn);
-            });
-            setRoute(route);
-        }
-
-        function registerServiceWorker() {
-            if (!('serviceWorker' in navigator)) return;
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/service-worker.js')
-                    .then(() => logTerminal('[PWA] service-worker.js registered.', 'system'))
-                    .catch((error) => logTerminal(`[PWA] service-worker registration failed: ${error.message}`, 'warn'));
-            });
-        }
-
-        window.addEventListener('offline', updateConnectionUI);
-        window.addEventListener('online', () => { checkApiStatus(); connectWsStatus(); });
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-
-        initStarterPrompts();
-        initQuickModes();
-        renderLineage();
-        setUiMode('landing');
-        setFlowState('NIRODHA');
-        setRuntimeState('IDLE');
-        updateUxState('เริ่มได้ทันทีด้วย starter prompt หรือพิมพ์ intent ของคุณ');
-        logTerminal('System initialized. Intent -> Governor -> Manifest pipeline ready.', 'success');
-        checkApiStatus();
-        connectWsStatus();
-        registerServiceWorker();
-        animate(0);
-    </script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#04050a" />
+    <link rel="manifest" href="app.webmanifest" />
+    <title>Aetherium Manifest</title>
+    <link rel="stylesheet" href="./clean-first-surface.css" />
+  </head>
+  <body>
+    <canvas id="manifestation-canvas" aria-hidden="true"></canvas>
+
+    <main class="first-surface" aria-label="Aetherium light-native surface">
+      <section class="chat-surface" aria-label="ช่องสนทนาหลัก">
+        <p id="ambient-status" class="ambient-status" aria-live="polite">พร้อมฟัง</p>
+        <p id="readable-fallback" class="readable-fallback" aria-live="polite"></p>
+        <form id="composer" class="composer" aria-label="Composer">
+          <label class="sr-only" for="intent-input">พิมพ์ข้อความ</label>
+          <input
+            id="intent-input"
+            name="intent"
+            autocomplete="off"
+            placeholder="พิมพ์ข้อความของคุณ…"
+            enterkeyhint="send"
+          />
+          <button
+            id="voice-btn"
+            class="icon-btn"
+            type="button"
+            aria-label="เปิดหรือปิดการป้อนข้อความด้วยเสียง"
+            aria-pressed="false"
+          >
+            🎙
+          </button>
+          <button id="send-btn" type="submit" class="send-btn">ส่ง</button>
+        </form>
+      </section>
+
+      <button
+        id="settings-toggle"
+        class="icon-btn"
+        type="button"
+        aria-label="เปิดการตั้งค่า"
+        aria-controls="settings-panel"
+        aria-expanded="false"
+      >
+        ⚙
+      </button>
+    </main>
+
+    <aside id="settings-panel" class="settings" aria-label="Settings" hidden>
+      <header class="settings-header">
+        <h2>Settings</h2>
+        <button id="close-settings" class="icon-btn" type="button" aria-label="ปิดการตั้งค่า">✕</button>
+      </header>
+
+      
+
+      <section>
+        <h3>Connection</h3>
+        <label>API Base <input id="api-base" type="text" value="/api" /></label>
+        <label>WS Base <input id="ws-base" type="text" value="/ws/cognitive-stream" /></label>
+        <label>WS URL <input id="cfg-ws" type="text" value="/ws/cognitive-stream" /></label>
+        <button id="btn-connect" type="button" class="settings-inline-btn">Reconnect WS</button>
+        <p id="connection-status" class="ambient-status" aria-live="polite">DISCONNECTED</p>
+      </section>
+
+      <section>
+        <h3>Runtime</h3>
+        <label>Mode
+          <select id="runtime-mode">
+            <option value="calm">Calm</option>
+            <option value="adaptive">Adaptive</option>
+            <option value="deterministic">Deterministic</option>
+          </select>
+        </label>
+        <label><input id="telemetry-toggle" type="checkbox" checked /> Telemetry</label>
+        <label><input id="lineage-toggle" type="checkbox" /> Lineage / Replay tools</label>
+        <label><input id="scholar-toggle" type="checkbox" /> Scholar / Search layer</label>
+        <label><input id="governor-toggle" type="checkbox" /> Governor / Debug info</label>
+        <label><input id="devtools-toggle" type="checkbox" /> Developer tools</label>
+      </section>
+
+      <section>
+        <h3>Language &amp; Voice</h3>
+        <label>Preferred Language
+          <select id="language-preference">
+            <option value="auto">Auto</option>
+            <option value="th">ไทย</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <label><input id="local-detector-toggle" type="checkbox" checked /> Use local language detector</label>
+        <label>Local model profile
+          <select id="local-model-profile">
+            <option value="none">None (heuristics only)</option>
+            <option value="tiny-rules" selected>Tiny rules (short text)</option>
+          </select>
+        </label>
+        <label><input id="reduced-motion-toggle" type="checkbox" /> Reduced motion</label>
+        <label><input id="voice-enabled-toggle" type="checkbox" checked /> Enable voice input</label>
+        <button id="voice-capture" type="button" class="settings-inline-btn" aria-label="Start voice capture">
+          Start voice capture
+        </button>
+      </section>
+
+      <section>
+        <h3>Export &amp; Tools</h3>
+        <button id="export-session" type="button">Export session audit (JSON)</button>
+        <p id="settings-note">Advanced controls live here only by design.</p>
+      </section>
+    </aside>
+
+    <script type="module" src="./clean-first-surface.js"></script>
+  </body>
 </html>

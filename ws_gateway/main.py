@@ -4,10 +4,11 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 import redis.asyncio as redis
 
-app = FastAPI(title="Aetherium WS Gateway")
 logger = logging.getLogger("ws-gateway")
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -36,13 +37,22 @@ APPROVAL_ACTIONS = {"request", "approve", "reject"}
 ROOM_LAST_STREAM_ID: dict[str, str] = {}
 
 
-@app.on_event("startup")
-async def startup() -> None:
+@asynccontextmanager
+async def lifespan(_: FastAPI):
     global r
     try:
         r = redis.from_url(REDIS_URL, decode_responses=True)
+        yield
     except Exception:
         logger.exception("ws-gateway startup failed")
+        yield
+    finally:
+        if r:
+            await r.aclose()
+            r = None
+
+
+app = FastAPI(title="Aetherium WS Gateway", lifespan=lifespan)
 
 
 @app.get("/health")
