@@ -752,20 +752,32 @@ async def query_telemetry(
         "p95": p95,
         "latest": rows[-1] if rows else None,
     }
+@app.post("/api/v1/export/request")
+async def request_export(
+    request: ExportRequest,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> ExportResponse:
+    _ensure_api_key(x_api_key)
+    export_id = f"exp_{uuid.uuid4().hex[:10]}"
+    audit_trail_id = f"audit_{uuid.uuid4().hex[:10]}"
+    replay_key = hashlib.sha256(f"{request.session_id}:{request.lineage_id}".encode()).hexdigest()[:16]
+    created_at = datetime.now(timezone.utc).isoformat()
+    created_at_dt = datetime.fromisoformat(created_at)
+    audit_record = {
+        "export_id": export_id,
+        "session_id": request.session_id,
+        "lineage_id": request.lineage_id,
+        "selected_variation_id": request.selected_variation_id,
+        "artifact_type": request.artifact_type,
+        "status": "accepted",
+        "audit_trail_id": audit_trail_id,
+        "replay_key": replay_key,
+        "review_status": "ready_for_enterprise_review",
+        "created_at": created_at_dt,
+        "options": request.options,
+    }
     EXPORT_AUDIT_TRAIL.insert(0, audit_record)
-    return ExportResponse(
-        export_id=export_id,
-        session_id=request.session_id,
-        lineage_id=request.lineage_id,
-        selected_variation_id=request.selected_variation_id,
-        artifact_type=request.artifact_type,
-        status="accepted",
-        audit_trail_id=audit_trail_id,
-        replay_key=replay_key,
-        review_status="ready_for_enterprise_review",
-        created_at=created_at,
-        options=request.options,
-    )
+    return ExportResponse(**audit_record)
 
 @app.get("/api/v1/export/history")
 async def export_history(
